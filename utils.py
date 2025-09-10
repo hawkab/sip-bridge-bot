@@ -83,7 +83,6 @@ def get_status() -> str:
     # disk
     st = os.statvfs("/")
     free = st.f_bavail * st.f_frsize
-    total = st.f_blocks * st_frs = st.f_frsize
     total = st.f_blocks * st.f_frsize
     # mem
     mem_free = 0
