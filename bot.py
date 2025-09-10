@@ -10,12 +10,22 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 # ================= ENV =================
 def load_env(path):
     p = Path(path)
-    if p.exists():
-        for line in p.read_text().splitlines():
-            if not line.strip() or line.strip().startswith("#"): continue
-            if "=" in line:
-                k,v = line.split("=",1)
-                os.environ.setdefault(k.strip(), v.strip())
+    if not p.exists():
+        return
+    for line in p.read_text().splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if "=" not in s:
+            continue
+        k, v = s.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        # обрежем хвостовой комментарий, если значение не в кавычках
+        if not (v.startswith('"') and v.endswith('"')) and not (v.startswith("'") and v.endswith("'")):
+            if "#" in v:
+                v = v.split("#", 1)[0].rstrip()
+        os.environ.setdefault(k, v)
 load_env("/opt/sms/.env")
 
 def must(k):
@@ -68,9 +78,16 @@ def only_admin(func):
 # ================= UTILS =================
 def git_pull(repo_dir: str, branch: str) -> str:
     logs = []
-    def add(cmd): logs.append("$ "+" ".join(cmd) + "\n" + run_argv_loose(cmd))
-    # Попытка fast-forward pull
-    add(["git","-C",repo_dir,"rev-parse","--abbrev-ref","HEAD"])
+    def add(cmd):
+        logs.append("$ " + " ".join(cmd) + "\n" + run_argv_loose(cmd))
+
+    if not os.path.isdir(repo_dir) or not os.path.isdir(os.path.join(repo_dir, ".git")):
+        remote = os.environ.get("GIT_REMOTE_URL", "")
+        if not remote:
+            return f"Repo '{repo_dir}' missing and GIT_REMOTE_URL not set"
+        add(["git", "clone", remote, repo_dir])
+
+    add(["git","-C",repo_dir,"remote","-v"])
     add(["git","-C",repo_dir,"fetch","--all","--prune"])
     add(["git","-C",repo_dir,"checkout",branch])
     add(["git","-C",repo_dir,"pull","--ff-only","origin",branch])
@@ -108,11 +125,9 @@ def run_argv(argv: list[str]) -> str:
     except Exception as e:
         return f"ERR: {e}"
 def run_argv_loose(argv: list[str]) -> str:
-    # Не бросает исключение при exit!=0, возвращает stdout или код возврата
     p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       text=True, timeout=10)
-    out = (p.stdout or "").strip()
-    return out if out else f"exit={p.returncode}"
+                       text=True, timeout=60)
+    return (p.stdout or "").strip() or f"exit={p.returncode}"
 def get_asterisk_uptime_text() -> str:
     # Порядок попыток: rasterisk → asterisk
     tries = [
@@ -345,7 +360,7 @@ class YeastarSMSClient:
 @only_admin
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Доступные команды:\n/status — статус сервера\n"
+        "/status — статус сервера\n"
         "/logs_os [N] — последние строки системного журнала\n"
         "/logs_sip [N] — последние строки журнала Asterisk\n"
         "/vpn_on /vpn_off — включить/выключить WireGuard\n"
@@ -484,7 +499,7 @@ async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(document=f, filename=fname, caption="Git pull log")
 
     # Перезапуск бота
-    out = run_argv_loose(["sudo","systemctl","restart",BOT_SERVICE_NAME])
+    out = run_argv_loose(["sudo","-n","systemctl","restart",BOT_SERVICE_NAME])
     # Ответим перед тем, как процесс завершится (на всякий случай)
     await update.message.reply_text(f"🔁 systemctl restart {BOT_SERVICE_NAME}\n{out}")
 
