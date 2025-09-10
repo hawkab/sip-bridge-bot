@@ -2,7 +2,8 @@
 from telegram.ext import ApplicationBuilder
 from config import CONFIG
 from ys_client import YeastarSMSClient
-from handlers import register_handlers, start_ys_reader
+from handlers import register_handlers, on_post_init
+
 
 def main():
     ys = YeastarSMSClient(CONFIG.TG_HOST, CONFIG.TG_PORT, CONFIG.TG_USER, CONFIG.TG_PASS)
@@ -11,7 +12,7 @@ def main():
     app.bot_data["ys"] = ys
 
     register_handlers(app)
-    app.post_init = start_ys_reader
+    app.post_init = on_post_init
 
     app.run_polling(allowed_updates=None, stop_signals=None)
 

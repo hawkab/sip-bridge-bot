@@ -5,8 +5,10 @@ from config import CONFIG
 from auth import only_admin, get_admin_chat_id
 from utils import (
     get_status, get_os_logs, get_asterisk_logs, _write_tmp,
-    render_resp, norm_sim, git_pull, run_argv_loose
+    norm_sim, git_pull, run_argv_loose, get_app_version_text
 )
+
+
 from ys_client import YeastarSMSClient
 
 # ======= Commands =======
@@ -128,6 +130,27 @@ async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     out = run_argv_loose(["sudo","-n","systemctl","restart",CONFIG.BOT_SERVICE_NAME])
     await update.message.reply_text(f"🔁 systemctl restart {CONFIG.BOT_SERVICE_NAME}\n{out}")
+
+# ======== Post-init: запуск reader'а и уведомление о старте ========
+async def on_post_init(app: Application):
+    # запустить TG200 reader
+    await start_ys_reader(app)
+
+    # уведомление администратору
+    try:
+        admin_chat = get_admin_chat_id()
+        if admin_chat:
+            ver = get_app_version_text()
+            from time import strftime
+            text = (
+                f"✅ Бот запущен ({strftime('%Y-%m-%d %H:%M:%S')})\n\n"
+                f"Версия (Git):\n```\n{ver}\n```"
+            )
+            await app.bot.send_message(chat_id=admin_chat, text=text, parse_mode="Markdown")
+    except Exception:
+        # молча игнорируем, чтобы не мешать запуску
+        pass
+
 
 # ======== Incoming SMS -> Telegram ========
 async def start_ys_reader(app: Application):
