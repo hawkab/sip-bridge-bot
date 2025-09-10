@@ -92,7 +92,7 @@ async def on_reboot_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ys_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ys: YeastarSMSClient = context.bot_data["ys"]
     r = await ys.send_command("gsm show spans")
-    await update.message.reply_text(f"{r.get('Response')} — {r}")
+    await update.message.reply_text(f"{r}")
 
 @only_admin
 async def ys_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
