@@ -83,6 +83,7 @@ def get_status() -> str:
     # disk
     st = os.statvfs("/")
     free = st.f_bavail * st.f_frsize
+    total = st.f_blocks * st_frs = st.f_frsize
     total = st.f_blocks * st.f_frsize
     # mem
     mem_free = 0
@@ -97,6 +98,9 @@ def get_status() -> str:
     # asterisk
     ast_active = run("systemctl is-active asterisk")
     ast_uptime = get_asterisk_uptime_text()
+    # app version (новое)
+    app_ver = get_app_version_text()
+
     return textwrap.dedent(f"""
     🖥️ *Server status*
     Uptime: `{uptime}`
@@ -115,7 +119,13 @@ def get_status() -> str:
     ```
     {ast_uptime}
     ```
+
+    Приложение (Git):
+    ```
+    {app_ver}
+    ```
     """).strip()
+
 
 # --- TG/Ys helpers ---
 def norm_sim(sim) -> int:
@@ -148,3 +158,34 @@ def git_pull(repo_dir: str, branch: str) -> str:
     add(["git","-C",repo_dir,"checkout",branch])
     add(["git","-C",repo_dir,"pull","--ff-only","origin",branch])
     return "\n\n".join(logs)
+
+def get_app_version_text() -> str:
+    """
+    Возвращает краткую сводку версии из Git для репозитория CONFIG.GIT_REPO_DIR.
+    Толерантна к ошибкам/отсутствию репозитория.
+    """
+    repo = CONFIG.GIT_REPO_DIR
+
+    # На всякий случай отметим каталог как безопасный (исправляет "dubious ownership")
+    _ = run_argv_loose(["git", "config", "--global", "--add", "safe.directory", repo])
+
+    inside = run_argv_loose(["git", "-C", repo, "rev-parse", "--is-inside-work-tree"]).strip()
+    if inside != "true":
+        return "n/a"
+
+    branch   = run_argv_loose(["git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    commit   = run_argv_loose(["git", "-C", repo, "rev-parse", "--short", "HEAD"]).strip()
+    describe = run_argv_loose(["git", "-C", repo, "describe", "--tags", "--always", "--dirty"]).strip()
+    date     = run_argv_loose(["git", "-C", repo, "show", "-s", "--format=%cd", "--date=iso-strict", "HEAD"]).strip()
+    subj     = run_argv_loose(["git", "-C", repo, "show", "-s", "--format=%s", "HEAD"]).strip()
+    dirty_out= run_argv_loose(["git", "-C", repo, "status", "--porcelain"])
+    dirty    = "dirty" if dirty_out.strip() else "clean"
+
+    # Склеим компактный блок
+    return textwrap.dedent(f"""
+    Branch: `{branch}`
+    Commit: `{commit}` ({dirty})
+    Tag/Describe: `{describe}`
+    Date: `{date}`
+    Subject: {subj or "-"}
+    """).strip()
