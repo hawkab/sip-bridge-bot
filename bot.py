@@ -360,7 +360,7 @@ class YeastarSMSClient:
 @only_admin
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "/status — статус сервера\n"
+        "Доступные команды:\n/status — статус сервера\n"
         "/logs_os [N] — последние строки системного журнала\n"
         "/logs_sip [N] — последние строки журнала Asterisk\n"
         "/vpn_on /vpn_off — включить/выключить WireGuard\n"
