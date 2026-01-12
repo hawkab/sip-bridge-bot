@@ -116,7 +116,6 @@ def get_status() -> str:
     ```
     """).strip()
 
-
 # --- TG/Ys helpers ---
 def norm_sim(sim) -> int:
     s = str(sim or "").strip()
