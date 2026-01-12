@@ -105,11 +105,6 @@ def get_status() -> str:
     RAM free: `{bytes2hr(mem_free)}`
     Asterisk: `{ast_active}`
 
-    WireGuard:
-    ```
-    {wg_show}
-    ```
-
     Asterisk uptime:
     ```
     {ast_uptime}
