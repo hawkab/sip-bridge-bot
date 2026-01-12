@@ -91,9 +91,6 @@ def get_status() -> str:
         kv = {k.strip():int(v.split()[0])*1024 for k,v in (line.split(":",1) for line in meminfo)}
         mem_free = kv.get("MemAvailable", kv.get("MemFree",0))
     except Exception: pass
-    # vpn
-    wg_active = run(f"systemctl is-active wg-quick@{CONFIG.WG_IFACE}")
-    wg_show   = run("wg show")
     # asterisk
     ast_active = run("systemctl is-active asterisk")
     ast_uptime = get_asterisk_uptime_text()
@@ -106,7 +103,6 @@ def get_status() -> str:
     Temp: `{temp}`
     Disk: `{bytes2hr(total-free)}/{bytes2hr(total)} used`
     RAM free: `{bytes2hr(mem_free)}`
-    VPN ({CONFIG.WG_IFACE}): `{wg_active}`
     Asterisk: `{ast_active}`
 
     WireGuard:
