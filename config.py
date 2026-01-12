@@ -42,7 +42,6 @@ class Config:
         self.ASTERISK_CLI    = os.environ.get("ASTERISK_CLI","/usr/sbin/asterisk")
         self.ASTERISK_LOG    = os.environ.get("ASTERISK_LOG","/var/log/asterisk/messages")
         self.OS_LOG          = os.environ.get("OS_LOG","/var/log/syslog")
-        self.WG_IFACE        = os.environ.get("WG_IFACE","wg0")
 
         self.GIT_REPO_DIR    = os.environ.get("GIT_REPO_DIR","/opt/sms")
         self.GIT_BRANCH      = os.environ.get("GIT_BRANCH","main")
