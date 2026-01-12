@@ -51,18 +51,6 @@ async def cmd_logs_sip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(document=f, filename=fname)
 
 @only_admin
-async def cmd_vpn_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from utils import run
-    out = run(f"sudo systemctl start wg-quick@{CONFIG.WG_IFACE}")
-    await update.message.reply_text(f"VPN ON: {out}")
-
-@only_admin
-async def cmd_vpn_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from utils import run
-    out = run(f"sudo systemctl stop wg-quick@{CONFIG.WG_IFACE}")
-    await update.message.reply_text(f"VPN OFF: {out}")
-
-@only_admin
 async def cmd_ast_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils import run
     out = run("sudo systemctl restart asterisk")
