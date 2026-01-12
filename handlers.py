@@ -20,7 +20,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status — статус сервера\n"
         "/logs_os [N] — последние строки системного журнала\n"
         "/logs_sip [N] — последние строки журнала Asterisk\n"
-        "/vpn_on /vpn_off — включить/выключить WireGuard\n"
         "/asterisk_restart — рестарт Asterisk\n"
         "/reboot — перезагрузка сервера\n"
         "/update — git pull + рестарт бота\n"
@@ -159,8 +158,6 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("logs_os", cmd_logs_os))
     app.add_handler(CommandHandler("logs_sip", cmd_logs_sip))
-    app.add_handler(CommandHandler("vpn_on", cmd_vpn_on))
-    app.add_handler(CommandHandler("vpn_off", cmd_vpn_off))
     app.add_handler(CommandHandler("asterisk_restart", cmd_ast_restart))
     app.add_handler(CommandHandler("reboot", cmd_reboot))
     app.add_handler(CommandHandler("update", cmd_update))
