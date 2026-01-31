@@ -1,4 +1,4 @@
-import asyncio, urllib.parse, traceback
+import asyncio, urllib.parse, traceback, time
 from typing import Optional
 from config import CONFIG
 
@@ -15,6 +15,9 @@ class YeastarSMSClient:
         self.on_sms = None
         self.resp_queue: asyncio.Queue = asyncio.Queue()
 
+    # Буфер для склейки длинных SMS: key -> {total, parts{idx:text}, ts, when}
+    self._sms_parts = {}
+    
     async def connect_forever(self):
         while True:
             try:
@@ -78,27 +81,64 @@ class YeastarSMSClient:
 
     def _handle_block(self, block: str):
         kv = self._parse_block(block)
-        if kv.get("Event") == "ReceivedSMS":
-            sender = kv.get("Sender","")
-            sim    = kv.get("GsmPort","") or kv.get("Port","")
-            when   = kv.get("Recvtime","") or kv.get("Time","")
-            raw    = kv.get("Content","")
-            try:
-                text = urllib.parse.unquote(raw)
-            except Exception:
-                text = raw
-            if self.on_sms:
-                try:
-                    self.on_sms(sender, sim, when, text)
-                except Exception:
-                    traceback.print_exc()
-            return
 
-        if any(k in kv for k in ("Response","Message","Outputs")):
+        if kv.get("Event") == "ReceivedSMS":
+            sender = kv.get("Sender", "")
+            sim    = kv.get("GsmPort", "") or kv.get("Port", "")
+            when   = kv.get("Recvtime", "") or kv.get("Time", "")
+
+            sms_id = (kv.get("ID", "") or "").strip()
+            idx_raw = (kv.get("Index", "") or "1").strip()
+            total_raw = (kv.get("Total", "") or "1").strip()
+
             try:
-                self.resp_queue.put_nowait(kv)
+                idx = int(idx_raw)
             except Exception:
-                pass
+                idx = 1
+            try:
+                total = int(total_raw)
+            except Exception:
+                total = 1
+
+            raw = kv.get("Content", "") or ""
+            try:
+                part = urllib.parse.unquote_plus(raw).lstrip("\ufeff")
+            except Exception:
+                part = raw
+
+            # Если не длинная (или нет ID) — сразу отдаём
+            if total <= 1 or not sms_id:
+                if self.on_sms:
+                    try:
+                        self.on_sms(sender, sim, when, part)
+                    except Exception:
+                        traceback.print_exc()
+                return
+
+            # чистим старые хвосты (5 минут)
+            now = time.time()
+            for k in list(self._sms_parts.keys()):
+                if now - self._sms_parts[k]["ts"] > 300:
+                    self._sms_parts.pop(k, None)
+
+            key = f"{sms_id}:{sender}:{sim}"
+            buf = self._sms_parts.setdefault(key, {"total": total, "parts": {}, "ts": now, "when": when})
+            buf["total"] = total
+            buf["ts"] = now
+            buf["when"] = buf.get("when") or when
+            buf["parts"][idx] = part
+
+            # если собрали всё — склеиваем по порядку
+            if len(buf["parts"]) >= total:
+                full = "".join(buf["parts"].get(i, "") for i in range(1, total + 1)).lstrip("\ufeff")
+                self._sms_parts.pop(key, None)
+
+                if self.on_sms:
+                    try:
+                        self.on_sms(sender, sim, buf["when"], full)
+                    except Exception:
+                        traceback.print_exc()
+            return
 
     async def _send_raw(self, s: str):
         if not self.writer:
