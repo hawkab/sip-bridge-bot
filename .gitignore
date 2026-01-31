@@ -1,3 +1,6 @@
 .env
 venv
 .admin_chat_id
+__pycache__/.pyc
+.idea/
+.iml
