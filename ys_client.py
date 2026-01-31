@@ -14,9 +14,7 @@ class YeastarSMSClient:
         self.writer: Optional[asyncio.StreamWriter] = None
         self.on_sms = None
         self.resp_queue: asyncio.Queue = asyncio.Queue()
-
-    # Буфер для склейки длинных SMS: key -> {total, parts{idx:text}, ts, when}
-    self._sms_parts = {}
+        self._sms_parts = {}
     
     async def connect_forever(self):
         while True:
