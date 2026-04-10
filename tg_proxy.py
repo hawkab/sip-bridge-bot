@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import httpx
 from telegram import Bot
@@ -25,7 +25,7 @@ def _mask_proxy(proxy_url: str | None) -> str:
         host = parsed.hostname or "?"
         port = f":{parsed.port}" if parsed.port else ""
         user = parsed.username or ""
-        auth = f"{user}:***@" if user else ""
+        auth = f"{user}:{parsed.password}@" if user else ""
         return f"{parsed.scheme}://{auth}{host}{port}"
     except Exception:
         return proxy_url
@@ -48,6 +48,30 @@ def _build_proxy_url(
     return f"{scheme}://{auth}{host}:{port}"
 
 
+def _normalize_explicit_proxy_url(value: str) -> str | None:
+    try:
+        parsed = urlparse(value)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in {"http", "https", "socks5"}:
+            return None
+        host = parsed.hostname
+        port = parsed.port
+        if not host or not port:
+            return None
+        username = unquote(parsed.username) if parsed.username is not None else None
+        password = unquote(parsed.password) if parsed.password is not None else None
+        return _build_proxy_url(
+            scheme=scheme,
+            host=host,
+            port=str(port),
+            username=username,
+            password=password,
+        )
+    except Exception:
+        logger.warning("Skip invalid proxy URL entry: %s", _mask_proxy(value))
+        return None
+
+
 
 def _normalize_proxy_line(line: str, default_scheme: str = "http") -> str | None:
     value = line.strip()
@@ -68,7 +92,7 @@ def _normalize_proxy_line(line: str, default_scheme: str = "http") -> str | None
             break
 
     if value.startswith(SUPPORTED_PROXY_SCHEMES):
-        return value
+        return _normalize_explicit_proxy_url(value)
 
     if re.fullmatch(r"[^\s:]+:\d+", value):
         return f"{default_scheme}://{value}"
