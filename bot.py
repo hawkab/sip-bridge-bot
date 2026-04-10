@@ -49,6 +49,8 @@ def main():
     ys = YeastarSMSClient(CONFIG.TG_HOST, CONFIG.TG_PORT, CONFIG.TG_USER, CONFIG.TG_PASS)
 
     selected_proxy = asyncio.run(choose_working_proxy(CONFIG))
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
     apply_runtime_proxy_env(selected_proxy)
     logger.info("Selected Telegram proxy: %s", selected_proxy or "direct")
 

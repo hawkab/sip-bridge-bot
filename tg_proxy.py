@@ -159,6 +159,7 @@ async def choose_working_proxy(config) -> str | None:
         return None
 
     logger.warning("Direct Telegram connection failed: %s", details)
+    logger.info("Trying local proxy file first: %s", config.TG_PROXY_FILE)
 
     local_proxies = load_proxy_file(config.TG_PROXY_FILE)
     if local_proxies:
@@ -168,6 +169,7 @@ async def choose_working_proxy(config) -> str | None:
     else:
         logger.info("Proxy file is empty or absent: %s", config.TG_PROXY_FILE)
 
+    logger.info("Local proxy file did not yield a working proxy. Falling back to GitHub sources.")
     github_proxies = await _download_github_proxies(config.TG_PROXY_GITHUB_URLS, config.TG_PROXY_TEST_TIMEOUT)
     if github_proxies:
         save_proxy_file(config.TG_PROXY_FILE, github_proxies)
