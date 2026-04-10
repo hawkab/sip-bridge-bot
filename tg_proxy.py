@@ -9,6 +9,8 @@ from typing import Iterable
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+from telegram import Bot
+from telegram.request import HTTPXRequest
 
 logger = logging.getLogger(__name__)
 
@@ -104,26 +106,38 @@ def save_mtproto_entries(path: Path, entries: list[str]) -> None:
 
 
 async def probe_telegram(token: str, proxy_url: str | None, timeout: float) -> tuple[bool, str]:
-    url = f"https://api.telegram.org/bot{token}/getMe"
-    client_kwargs = {
-        "timeout": httpx.Timeout(timeout),
-        "follow_redirects": False,
-        "trust_env": False,
-    }
-    if proxy_url:
-        client_kwargs["proxy"] = proxy_url
-
+    request = HTTPXRequest(
+        connection_pool_size=1,
+        read_timeout=timeout,
+        write_timeout=timeout,
+        connect_timeout=timeout,
+        pool_timeout=timeout,
+        proxy=proxy_url,
+    )
+    get_updates_request = HTTPXRequest(
+        connection_pool_size=1,
+        read_timeout=timeout,
+        write_timeout=timeout,
+        connect_timeout=timeout,
+        pool_timeout=timeout,
+        proxy=proxy_url,
+    )
+    bot = Bot(
+        token=token,
+        request=request,
+        get_updates_request=get_updates_request,
+    )
     try:
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            response = await client.get(url)
-        if response.status_code != 200:
-            return False, f"HTTP {response.status_code}"
-        payload = response.json()
-        if payload.get("ok") is True:
-            return True, payload.get("result", {}).get("username", "") or "ok"
-        return False, json.dumps(payload, ensure_ascii=False)[:400]
+        await bot.initialize()
+        me = await bot.get_me()
+        return True, getattr(me, "username", "") or getattr(me, "id", "ok")
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
+    finally:
+        try:
+            await bot.shutdown()
+        except Exception:
+            pass
 
 
 async def probe_telegram_stable(
@@ -248,3 +262,18 @@ def apply_runtime_proxy_env(proxy_url: str | None) -> None:
 
     for key in keys:
         os.environ.pop(key, None)
+
+
+def remove_proxy_from_file(path: Path, proxy_url: str) -> None:
+    proxies = load_proxy_file(path)
+    updated = [item for item in proxies if item != proxy_url]
+    if len(updated) == len(proxies):
+        logger.info("Proxy %s was not present in %s, nothing to remove", _mask_proxy(proxy_url), path)
+        return
+    save_proxy_file(path, updated)
+    logger.warning(
+        "Removed failing proxy from %s: %s. Remaining usable proxies: %s",
+        path,
+        _mask_proxy(proxy_url),
+        len(updated),
+    )

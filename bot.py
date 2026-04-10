@@ -3,11 +3,12 @@ import asyncio
 import logging
 import os
 
+from telegram.error import NetworkError
 from telegram.ext import ApplicationBuilder, ContextTypes
 
 from config import CONFIG
 from handlers import register_handlers, on_post_init
-from tg_proxy import apply_runtime_proxy_env, choose_working_proxy
+from tg_proxy import apply_runtime_proxy_env, choose_working_proxy, remove_proxy_from_file
 from ys_client import YeastarSMSClient
 
 logging.basicConfig(
@@ -48,20 +49,33 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def main():
     ys = YeastarSMSClient(CONFIG.TG_HOST, CONFIG.TG_PORT, CONFIG.TG_USER, CONFIG.TG_PASS)
 
-    selected_proxy = asyncio.run(choose_working_proxy(CONFIG))
-    asyncio.set_event_loop(asyncio.new_event_loop())
+    while True:
+        selected_proxy = asyncio.run(choose_working_proxy(CONFIG))
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
-    apply_runtime_proxy_env(selected_proxy)
-    logger.info("Selected Telegram proxy: %s", selected_proxy or "direct")
+        apply_runtime_proxy_env(selected_proxy)
+        logger.info("Selected Telegram proxy: %s", selected_proxy or "direct")
 
-    app = build_application(selected_proxy)
-    app.bot_data["ys"] = ys
-    app.add_error_handler(error_handler)
+        app = build_application(selected_proxy)
+        app.bot_data["ys"] = ys
+        app.add_error_handler(error_handler)
 
-    register_handlers(app)
-    app.post_init = on_post_init
+        register_handlers(app)
+        app.post_init = on_post_init
 
-    app.run_polling(allowed_updates=None, stop_signals=None)
+        try:
+            app.run_polling(allowed_updates=None, stop_signals=None)
+            return
+        except NetworkError:
+            if not selected_proxy:
+                raise
+            logger.exception(
+                "Telegram bootstrap/runtime failed with selected proxy %s. Removing it from %s and retrying.",
+                selected_proxy,
+                CONFIG.TG_PROXY_FILE,
+            )
+            remove_proxy_from_file(CONFIG.TG_PROXY_FILE, selected_proxy)
+            apply_runtime_proxy_env(None)
 
 
 if __name__ == "__main__":
