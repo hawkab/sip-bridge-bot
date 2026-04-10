@@ -179,6 +179,7 @@
    - `/status` — сводка: аптайм, температура, диск, RAM, состояние WireGuard, состояние и аптайм Asterisk, **версия приложения (Git)**.
    - `/logs_os [N]` — последние N строк системного журнала (файл или `journalctl`); присылается файлом.
    - `/logs_sip [N]` — последние N строк журнала Asterisk; присылается файлом.
+   - `/cdr_csv` — скачать файл CDR Asterisk `/var/log/asterisk/cdr-csv/Master.csv`.
    - `/vpn_on` / `/vpn_off` — запустить/остановить `wg-quick@${WG_IFACE}` (нужны правила NOPASSWD).
    - `/asterisk_restart` — перезапуск службы Asterisk.
    - `/reboot` — запрос на перезагрузку хоста (кнопка подтверждения).

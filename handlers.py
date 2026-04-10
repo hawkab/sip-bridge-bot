@@ -23,11 +23,11 @@ FAILED_TG_QUEUE = Path("/opt/sms/failed_telegram.queue")
 
 # ---------- Telegram safe send ----------
 async def send_tg_safe(
-    app: Application,
-    chat_id: int,
-    text: str,
-    parse_mode: str | None = None,
-    reply_markup=None,
+        app: Application,
+        chat_id: int,
+        text: str,
+        parse_mode: str | None = None,
+        reply_markup=None,
 ) -> bool:
     delays = [0, 1, 2, 5, 10, 20]
     last_exc = None
@@ -184,6 +184,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status — статус сервера\n"
         "/logs_os [N] — последние строки системного журнала\n"
         "/logs_sip [N] — последние строки журнала Asterisk\n"
+        "/cdr_csv — скачать файл CDR Asterisk Master.csv\n"
         "/asterisk_restart — рестарт Asterisk\n"
         "/reboot — перезагрузка сервера\n"
         "/update — git pull + рестарт бота\n"
@@ -191,9 +192,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ys_cmd <raw>"
     )
 
+
 @only_admin
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_markdown(get_status())
+
 
 @only_admin
 async def cmd_logs_os(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -204,6 +207,7 @@ async def cmd_logs_os(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open(p, "rb") as f:
         await update.message.reply_document(document=f, filename=fname)
 
+
 @only_admin
 async def cmd_logs_sip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     n = int(context.args[0]) if (context.args and context.args[0].isdigit()) else 200
@@ -213,11 +217,27 @@ async def cmd_logs_sip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open(p, "rb") as f:
         await update.message.reply_document(document=f, filename=fname)
 
+
+@only_admin
+async def cmd_cdr_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cdr_file = "/var/log/asterisk/cdr-csv/Master.csv"
+    if not os.path.exists(cdr_file):
+        await update.message.reply_text(f"Файл не найден: {cdr_file}")
+        return
+
+    with open(cdr_file, "rb") as f:
+        await update.message.reply_document(
+            document=f,
+            filename=f"Master_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+        )
+
+
 @only_admin
 async def cmd_ast_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from utils import run
     out = run("sudo systemctl restart asterisk")
     await update.message.reply_text(f"Asterisk restart: {out}")
+
 
 @only_admin
 async def cmd_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -226,6 +246,7 @@ async def cmd_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("Отмена", callback_data="reboot:no")]
     ])
     await update.message.reply_text("Подтвердите перезагрузку:", reply_markup=kb)
+
 
 @only_admin
 async def on_reboot_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -238,12 +259,14 @@ async def on_reboot_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await q.edit_message_text("Отменено.")
 
+
 # ---------- Yeastar raw ----------
 @only_admin
 async def ys_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ys: YeastarSMSClient = context.bot_data["ys"]
     r = await ys.send_command("gsm show spans")
     await update.message.reply_text(f"{r}")
+
 
 @only_admin
 async def ys_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -254,6 +277,7 @@ async def ys_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     r = await ys.send_command(cmd, wait=3.0)
     lines = [f"{k}: {v}" for k, v in r.items()]
     await update.message.reply_text("Ответ TG:\n" + ("\n".join(lines) if lines else "нет данных"))
+
 
 # ---------- Git update ----------
 @only_admin
@@ -266,6 +290,7 @@ async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(document=f, filename=fname, caption="Git pull log")
     out = run_argv_loose(["sudo", "-n", "systemctl", "restart", CONFIG.BOT_SERVICE_NAME])
     await update.message.reply_text(f"🔁 systemctl restart {CONFIG.BOT_SERVICE_NAME}\n{out}")
+
 
 # ======== Мониторинг CDR Asterisk ========
 async def start_cdr_monitor(app: Application):
@@ -309,6 +334,7 @@ async def start_cdr_monitor(app: Application):
     monitor = CDRMonitor(cdr_file, cdr_group_callback, check_interval=5.0, group_timeout=30.0)
     asyncio.create_task(monitor.start())
 
+
 # ======== Incoming SMS -> Telegram ========
 async def start_ys_reader(app: Application):
     ys: YeastarSMSClient = app.bot_data["ys"]
@@ -330,6 +356,7 @@ async def start_ys_reader(app: Application):
     ys.on_sms = lambda s, p, w, t: asyncio.create_task(sms_cb(s, p, w, t))
     asyncio.create_task(ys.connect_forever())
 
+
 # ======== Post-init ========
 async def on_post_init(app: Application):
     await start_ys_reader(app)
@@ -347,11 +374,13 @@ async def on_post_init(app: Application):
     except Exception:
         pass
 
+
 def register_handlers(app: Application):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("logs_os", cmd_logs_os))
     app.add_handler(CommandHandler("logs_sip", cmd_logs_sip))
+    app.add_handler(CommandHandler("cdr_csv", cmd_cdr_csv))
     app.add_handler(CommandHandler("asterisk_restart", cmd_ast_restart))
     app.add_handler(CommandHandler("reboot", cmd_reboot))
     app.add_handler(CommandHandler("update", cmd_update))
