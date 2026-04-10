@@ -187,24 +187,31 @@ async def choose_working_proxy(config) -> str | None:
     logger.info("Trying local proxy file first: %s", config.TG_PROXY_FILE)
 
     local_proxies = load_proxy_file(config.TG_PROXY_FILE)
-    if local_proxies:
+    local_count = len(local_proxies)
+    logger.info("Local proxy file yielded %s usable proxies: %s", local_count, config.TG_PROXY_FILE)
+    if local_count > 0:
         selected = await _try_proxy_candidates(config, local_proxies, source=f"file {config.TG_PROXY_FILE}")
         if selected:
             return selected
+        logger.info("Local proxy file had %s usable proxies, but none passed Telegram checks: %s", local_count, config.TG_PROXY_FILE)
     else:
         logger.info("Proxy file is empty or absent: %s", config.TG_PROXY_FILE)
 
     logger.info("Local proxy file did not yield a working proxy. Falling back to GitHub sources.")
     github_proxies = await _download_github_proxies(config.TG_PROXY_GITHUB_URLS, config.TG_PROXY_TEST_TIMEOUT)
     if github_proxies:
-        logger.warning(
-            "Replacing proxy file %s with %s proxies downloaded from GitHub",
-            config.TG_PROXY_FILE, len(github_proxies)
-        )
-        save_proxy_file(config.TG_PROXY_FILE, github_proxies)
         selected = await _try_proxy_candidates(config, github_proxies, source="GitHub")
         if selected:
+            logger.warning(
+                "Persisting %s proxies downloaded from GitHub into %s after successful selection",
+                len(github_proxies), config.TG_PROXY_FILE
+            )
+            save_proxy_file(config.TG_PROXY_FILE, github_proxies)
             return selected
+        logger.warning(
+            "GitHub sources produced %s usable proxies, but none passed Telegram checks. Existing file %s was left unchanged.",
+            len(github_proxies), config.TG_PROXY_FILE
+        )
 
     raise RuntimeError(
         "Unable to reach Telegram Bot API directly or via supported proxies. "
