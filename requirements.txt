@@ -1,1 +1,2 @@
 python-telegram-bot[socks]==20.8
+httpx[socks]

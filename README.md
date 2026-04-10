@@ -25,8 +25,6 @@
     sudo apt install -y python3-venv git curl
     # (опционально, для Raspberry)
     sudo apt install -y libraspberrypi-bin
-    # (опционально, если используете WireGuard-управление)
-    sudo apt install -y wireguard
 
 ### 2) Развёртывание кода
 
