@@ -1,42 +1,66 @@
 #!/usr/bin/env python3
+import asyncio
 import logging
-from telegram.request import HTTPXRequest
+import os
+
 from telegram.ext import ApplicationBuilder, ContextTypes
+
 from config import CONFIG
-from ys_client import YeastarSMSClient
 from handlers import register_handlers, on_post_init
+from tg_proxy import apply_runtime_proxy_env, choose_working_proxy
+from ys_client import YeastarSMSClient
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+logger = logging.getLogger(__name__)
 
-def build_tg_request() -> HTTPXRequest:
-    # Значения можно не выносить в env, но удобно:
-    # TG_CONNECT_TIMEOUT, TG_READ_TIMEOUT, TG_WRITE_TIMEOUT, TG_POOL_TIMEOUT
-    import os
-    return HTTPXRequest(
-        connect_timeout=float(os.environ.get("TG_CONNECT_TIMEOUT", "20")),
-        read_timeout=float(os.environ.get("TG_READ_TIMEOUT", "60")),
-        write_timeout=float(os.environ.get("TG_WRITE_TIMEOUT", "60")),
-        pool_timeout=float(os.environ.get("TG_POOL_TIMEOUT", "60")),
-    )
+
+def _timeout_env(name: str, default: str) -> float:
+    return float(os.environ.get(name, default))
+
+
+def build_application(selected_proxy: str | None):
+    builder = ApplicationBuilder().token(CONFIG.BOT_TOKEN)
+
+    builder = builder.connect_timeout(_timeout_env("TG_CONNECT_TIMEOUT", "20"))
+    builder = builder.read_timeout(_timeout_env("TG_READ_TIMEOUT", "60"))
+    builder = builder.write_timeout(_timeout_env("TG_WRITE_TIMEOUT", "60"))
+    builder = builder.pool_timeout(_timeout_env("TG_POOL_TIMEOUT", "60"))
+
+    builder = builder.get_updates_connect_timeout(_timeout_env("TG_CONNECT_TIMEOUT", "20"))
+    builder = builder.get_updates_read_timeout(_timeout_env("TG_READ_TIMEOUT", "60"))
+    builder = builder.get_updates_write_timeout(_timeout_env("TG_WRITE_TIMEOUT", "60"))
+    builder = builder.get_updates_pool_timeout(_timeout_env("TG_POOL_TIMEOUT", "60"))
+
+    if selected_proxy:
+        builder = builder.proxy(selected_proxy)
+        builder = builder.get_updates_proxy(selected_proxy)
+
+    return builder.build()
+
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Главное: больше не будет “No error handlers…”
     logging.exception("Unhandled exception in bot", exc_info=context.error)
+
 
 def main():
     ys = YeastarSMSClient(CONFIG.TG_HOST, CONFIG.TG_PORT, CONFIG.TG_USER, CONFIG.TG_PASS)
 
-    app = ApplicationBuilder().token(CONFIG.BOT_TOKEN).request(build_tg_request()).build()
+    selected_proxy = asyncio.run(choose_working_proxy(CONFIG))
+    apply_runtime_proxy_env(selected_proxy)
+    logger.info("Selected Telegram proxy: %s", selected_proxy or "direct")
+
+    app = build_application(selected_proxy)
     app.bot_data["ys"] = ys
     app.add_error_handler(error_handler)
-    
+
     register_handlers(app)
     app.post_init = on_post_init
 
     app.run_polling(allowed_updates=None, stop_signals=None)
+
 
 if __name__ == "__main__":
     main()

@@ -53,4 +53,15 @@ class Config:
         # Файл для кэша chat_id администратора
         self.ADMIN_CHAT_FILE = Path("/opt/sms/.admin_chat_id")
 
+        # Telegram proxy bootstrap
+        self.TG_PROXY_FILE = Path(os.environ.get("TG_PROXY_FILE", str(Path(self.GIT_REPO_DIR) / "proxy.txt")))
+        self.TG_PROXY_TEST_TIMEOUT = float(os.environ.get("TG_PROXY_TEST_TIMEOUT", "10"))
+        raw_proxy_urls = os.environ.get(
+            "TG_PROXY_GITHUB_URLS",
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt,"
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt,"
+            "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
+        )
+        self.TG_PROXY_GITHUB_URLS = [x.strip() for x in raw_proxy_urls.split(",") if x.strip()]
+
 CONFIG = Config()
