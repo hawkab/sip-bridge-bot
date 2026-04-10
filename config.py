@@ -1,5 +1,7 @@
 import os, sys
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 def load_env(path: str):
     p = Path(path)

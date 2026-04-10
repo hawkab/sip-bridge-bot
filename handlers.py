@@ -1,4 +1,5 @@
 import time
+import os
 from pathlib import Path
 from datetime import datetime
 import asyncio
@@ -14,8 +15,9 @@ from utils import (
     norm_sim, git_pull, run_argv_loose, get_app_version_text
 )
 from ys_client import YeastarSMSClient
+from cdr_monitor import CDRMonitor
 
-# Если Telegram временно недоступен, складываем сообщения сюда, чтобы ничего не пропало
+# Если Telegram временно недоступен, складываем сообщения сюда
 FAILED_TG_QUEUE = Path("/opt/sms/failed_telegram.queue")
 
 
@@ -27,12 +29,6 @@ async def send_tg_safe(
     parse_mode: str | None = None,
     reply_markup=None,
 ) -> bool:
-    """
-    Надёжная отправка в Telegram:
-    - несколько ретраев на TimedOut/NetworkError
-    - корректная пауза на RetryAfter (rate limit)
-    - если всё плохо — складываем текст в /opt/sms/failed_telegram.queue
-    """
     delays = [0, 1, 2, 5, 10, 20]
     last_exc = None
 
@@ -54,7 +50,6 @@ async def send_tg_safe(
         except (TimedOut, NetworkError) as e:
             last_exc = e
 
-    # Не смогли отправить вообще: сохраняем в файл-очередь (чтобы не потерять SMS)
     try:
         FAILED_TG_QUEUE.parent.mkdir(parents=True, exist_ok=True)
         with FAILED_TG_QUEUE.open("a", encoding="utf-8") as f:
@@ -65,14 +60,123 @@ async def send_tg_safe(
             f.write(text)
             f.write("\n")
     except Exception:
-        # даже если запись не удалась — не валим процесс
         pass
-
     return False
 
 
-# ======= Commands =======
+# ---------- Форматирование одного звонка (старый стиль) ----------
+def format_single_cdr(row: dict) -> str:
+    """Возвращает сообщение для одного звонка в старом, подробном формате."""
+    lines = []
+    if row.get("src"):
+        lines.append(f"От: `{row['src']}`")
+    if row.get("dst"):
+        lines.append(f"Кому: `{row['dst']}`")
+    if row.get("start"):
+        lines.append(f"Начало: `{row['start']}`")
+    if row.get("answer") and row['answer']:
+        lines.append(f"Ответ: `{row['answer']}`")
+    if row.get("end"):
+        lines.append(f"Конец: `{row['end']}`")
+    if row.get("duration"):
+        lines.append(f"Длительность (сек): `{row['duration']}`")
+    if row.get("billsec"):
+        lines.append(f"Разговор (сек): `{row['billsec']}`")
+    if row.get("disposition"):
+        disp = row['disposition']
+        if disp == "ANSWERED":
+            disp = "Отвечен"
+        elif disp == "NO ANSWER":
+            disp = "Нет ответа"
+        elif disp == "BUSY":
+            disp = "Занято"
+        elif disp == "FAILED":
+            disp = "Ошибка"
+        lines.append(f"Статус: `{disp}`")
+    if not lines:
+        return ""
+    return "📞 *Звонок (CDR)*\n" + "\n".join(lines)
 
+
+# ---------- Форматирование группы звонков (новый стиль) ----------
+def format_cdr_group(rows: list) -> str:
+    """
+    Если в группе одна запись – используется старый формат.
+    Если несколько – выводится групповое сообщение с детализацией попыток,
+    где время окончания показывается только как часы:минуты:секунды.
+    """
+    if not rows:
+        return ""
+
+    # Одиночный звонок – старый формат
+    if len(rows) == 1:
+        return format_single_cdr(rows[0])
+
+    # Группа из нескольких попыток
+    first = rows[0]
+    src = first.get('src', '?')
+    dst = first.get('dst', '?')
+    context = first.get('dcontext', '')
+
+    if 'inbound-gsm' in context:
+        direction = "Входящий с GSM"
+        caller = src
+        callee = dst
+    else:
+        direction = "Исходящий на GSM"
+        caller = src
+        callee = dst
+
+    lines = [f"📞 *{direction}*", f"От: `{caller}` → `{callee}`", ""]
+
+    for idx, row in enumerate(rows, 1):
+        start = row.get('start', '')
+        end = row.get('end', '')
+        duration = row.get('duration', '0')
+        disposition = row.get('disposition', '')
+
+        # Статус по-русски
+        if disposition == "ANSWERED":
+            disp = "Отвечен"
+        elif disposition == "NO ANSWER":
+            disp = "Не отвечено"
+        elif disposition == "BUSY":
+            disp = "Занято"
+        elif disposition == "FAILED":
+            disp = "Ошибка"
+        else:
+            disp = disposition
+
+        # Преобразуем время начала (только HH:MM:SS)
+        start_time = ""
+        if start:
+            try:
+                dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+                start_time = dt.strftime("%H:%M:%S")
+            except:
+                start_time = start
+
+        # Преобразуем время окончания (только HH:MM:SS)
+        end_time = ""
+        if end:
+            try:
+                dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+                end_time = dt.strftime("%H:%M:%S")
+            except:
+                end_time = end
+
+        line = f"{start_time} - {end_time} ({duration}с) {disp}"
+        lines.append(line)
+
+    # Итоговый статус группы
+    final_status = "Отвечен" if any(r.get('disposition') == "ANSWERED" for r in rows) else disp
+    lines.append("")
+    lines.append(f"Итог: {final_status} (попыток: {len(rows)})")
+
+    return "\n".join(lines)
+
+
+# ======== Команды ========
 @only_admin
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -89,7 +193,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @only_admin
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # get_status() у тебя уже возвращает форматированный Markdown
     await update.message.reply_markdown(get_status())
 
 @only_admin
@@ -135,7 +238,6 @@ async def on_reboot_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await q.edit_message_text("Отменено.")
 
-
 # ---------- Yeastar raw ----------
 @only_admin
 async def ys_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -153,28 +255,86 @@ async def ys_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [f"{k}: {v}" for k, v in r.items()]
     await update.message.reply_text("Ответ TG:\n" + ("\n".join(lines) if lines else "нет данных"))
 
-
 # ---------- Git update ----------
 @only_admin
 async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⬇️ Обновляюсь из Git и перезапускаю сервис…")
-
     log = git_pull(CONFIG.GIT_REPO_DIR, CONFIG.GIT_BRANCH)
     fname = f"update_{time.strftime('%Y%m%d_%H%M%S')}.log"
     p = _write_tmp(fname, log)
     with open(p, "rb") as f:
         await update.message.reply_document(document=f, filename=fname, caption="Git pull log")
-
     out = run_argv_loose(["sudo", "-n", "systemctl", "restart", CONFIG.BOT_SERVICE_NAME])
     await update.message.reply_text(f"🔁 systemctl restart {CONFIG.BOT_SERVICE_NAME}\n{out}")
 
+# ======== Мониторинг CDR Asterisk ========
+async def start_cdr_monitor(app: Application):
+    admin_chat = get_admin_chat_id()
+    if not admin_chat:
+        return
 
-# ======== Post-init: запуск reader'а и уведомление о старте ========
+    async def cdr_group_callback(group: list):
+        msg = format_cdr_group(group)
+        if not msg:
+            return
+
+        # Поиск отвеченной записи в группе
+        answered_record = None
+        for record in group:
+            if record.get('disposition') == "ANSWERED":
+                answered_record = record
+                break
+
+        # Если есть отвеченная запись, пытаемся отправить файл
+        if answered_record:
+            uniqueid = answered_record.get('uniqueid')
+            if uniqueid:
+                record_path = f"/var/spool/asterisk/monitor/{uniqueid}.wav"
+                # Проверяем, что файл существует и имеет размер больше 44 байт (содержит аудио)
+                if os.path.exists(record_path) and os.path.getsize(record_path) > 44:
+                    with open(record_path, 'rb') as f:
+                        await app.bot.send_document(
+                            chat_id=admin_chat,
+                            document=f,
+                            filename=f"{uniqueid}.wav",
+                            caption=msg,
+                            parse_mode="Markdown"
+                        )
+                    return
+
+        # Если нет отвеченной записи или файл пустой/отсутствует, отправляем только текст
+        await send_tg_safe(app, admin_chat, msg, parse_mode="Markdown")
+
+    cdr_file = "/var/log/asterisk/cdr-csv/Master.csv"
+    monitor = CDRMonitor(cdr_file, cdr_group_callback, check_interval=5.0, group_timeout=30.0)
+    asyncio.create_task(monitor.start())
+
+# ======== Incoming SMS -> Telegram ========
+async def start_ys_reader(app: Application):
+    ys: YeastarSMSClient = app.bot_data["ys"]
+
+    async def sms_cb(sender, sim, when, text):
+        admin_chat = get_admin_chat_id()
+        if not admin_chat:
+            return
+        sim_i = norm_sim(sim)
+        msg = (
+            f"📩 *SMS*\n"
+            f"От: `{sender}`\n"
+            f"SIM: `{sim_i}`\n"
+            f"Время: `{when}`\n\n"
+            f"{text}"
+        )
+        await send_tg_safe(app, admin_chat, msg, parse_mode="Markdown")
+
+    ys.on_sms = lambda s, p, w, t: asyncio.create_task(sms_cb(s, p, w, t))
+    asyncio.create_task(ys.connect_forever())
+
+# ======== Post-init ========
 async def on_post_init(app: Application):
-    # запустить TG200 reader
     await start_ys_reader(app)
+    await start_cdr_monitor(app)
 
-    # уведомление администратору
     try:
         admin_chat = get_admin_chat_id()
         if admin_chat:
@@ -185,37 +345,7 @@ async def on_post_init(app: Application):
             )
             await send_tg_safe(app, admin_chat, text, parse_mode="Markdown")
     except Exception:
-        # не мешаем запуску, даже если телега/сеть умерла
         pass
-
-
-# ======== Incoming SMS -> Telegram ========
-async def start_ys_reader(app: Application):
-    ys: YeastarSMSClient = app.bot_data["ys"]
-
-    async def sms_cb(sender, sim, when, text):
-        admin_chat = get_admin_chat_id()
-        if not admin_chat:
-            return
-
-        sim_i = norm_sim(sim)
-
-        # Если SMS уже “нормализована” (ты сделал unquote_plus + сборку частей),
-        # то тут просто отправляем.
-        msg = (
-            f"📩 *SMS*\n"
-            f"От: `{sender}`\n"
-            f"SIM: `{sim_i}`\n"
-            f"Время: `{when}`\n\n"
-            f"{text}"
-        )
-
-        # Важно: через send_tg_safe, иначе таймаут Telegram роняет таску
-        await send_tg_safe(app, admin_chat, msg, parse_mode="Markdown")
-
-    ys.on_sms = lambda s, p, w, t: app.create_task(sms_cb(s, p, w, t))
-    app.create_task(ys.connect_forever())
-
 
 def register_handlers(app: Application):
     app.add_handler(CommandHandler("start", start))
@@ -225,9 +355,6 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("asterisk_restart", cmd_ast_restart))
     app.add_handler(CommandHandler("reboot", cmd_reboot))
     app.add_handler(CommandHandler("update", cmd_update))
-
-    # Yeastar tools
     app.add_handler(CommandHandler("ys_ping", ys_ping))
     app.add_handler(CommandHandler("ys_cmd", ys_cmd))
-
     app.add_handler(CallbackQueryHandler(on_reboot_button, pattern=r"^reboot:(yes|no)$"))
