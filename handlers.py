@@ -258,6 +258,7 @@ async def on_post_init(app: Application):
     delivery = app.bot_data.get("delivery")
     if delivery:
         delivery.set_telegram_app(app)
+        await delivery.flush_pending_telegram_messages()
 
 
 def register_handlers(app: Application):
