@@ -5,6 +5,7 @@ import logging
 from bootstrap.config import CONFIG
 from bootstrap.wiring import configure_logging
 from integrations.email.imap_reader import MailGateway
+from integrations.event_store.client import EventStoreClient
 from integrations.telegram.adapter import run_telegram_transport
 from integrations.tg200.adapter import start_reader as start_ys_reader
 from integrations.tg200.client import YeastarSMSClient
@@ -20,10 +21,11 @@ logger = logging.getLogger(__name__)
 async def async_main() -> None:
     ys = YeastarSMSClient(CONFIG.TG_HOST, CONFIG.TG_PORT, CONFIG.TG_USER, CONFIG.TG_PASS)
     delivery = DeliveryHub(CONFIG)
+    event_store = EventStoreClient(CONFIG)
     command_service = CommandService(ys)
 
-    await start_ys_reader(ys, delivery)
-    await start_cdr_monitor(delivery)
+    await start_ys_reader(ys, delivery, event_store)
+    await start_cdr_monitor(delivery, event_store)
 
     tasks = [
         asyncio.create_task(run_telegram_transport(ys, delivery, command_service), name="telegram-transport"),

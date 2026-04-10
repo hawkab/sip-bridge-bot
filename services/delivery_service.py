@@ -12,6 +12,8 @@ from services.retry_policy import is_retryable_telegram_error
 
 logger = logging.getLogger(__name__)
 
+_EMAIL_ATTACHMENT_DEFAULT = object()
+
 
 class DeliveryHub:
     def __init__(self, config):
@@ -41,10 +43,22 @@ class DeliveryHub:
         async with self._telegram_send_lock:
             await self._flush_pending_telegram_messages_locked()
 
-    async def notify_event(self, subject: str, text: str, attachment_path: str | None = None, attachment_name: str | None = None, parse_mode: str | None = None) -> None:
+    async def notify_event(
+        self,
+        subject: str,
+        text: str,
+        attachment_path: str | None = None,
+        attachment_name: str | None = None,
+        parse_mode: str | None = None,
+        email_text: str | None = None,
+        email_attachment_path: str | None | object = _EMAIL_ATTACHMENT_DEFAULT,
+        email_attachment_name: str | None = None,
+    ) -> None:
+        resolved_email_attachment_path = attachment_path if email_attachment_path is _EMAIL_ATTACHMENT_DEFAULT else email_attachment_path
+        resolved_email_attachment_name = attachment_name if email_attachment_path is _EMAIL_ATTACHMENT_DEFAULT else email_attachment_name
         await asyncio.gather(
             self._notify_telegram(text, attachment_path, attachment_name, parse_mode=parse_mode),
-            self._notify_email(subject, text, attachment_path, attachment_name),
+            self._notify_email(subject, email_text or text, resolved_email_attachment_path, resolved_email_attachment_name),
             return_exceptions=True,
         )
 

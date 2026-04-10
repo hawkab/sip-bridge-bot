@@ -89,5 +89,10 @@ class Config:
         self.EMAIL_COMMAND_HASH = os.environ.get("EMAIL_COMMAND_HASH", "").strip()
         self.EMAIL_POLL_INTERVAL = int(os.environ.get("EMAIL_POLL_INTERVAL", "30"))
 
+        self.EVENT_STORE_SMS_URL = os.environ.get("EVENT_STORE_SMS_URL", "").strip()
+        self.EVENT_STORE_CALL_URL = os.environ.get("EVENT_STORE_CALL_URL", "").strip()
+        self.EVENT_STORE_AUTH_TOKEN = os.environ.get("EVENT_STORE_AUTH_TOKEN", "").strip()
+        self.EVENT_STORE_TIMEOUT_SECONDS = float(os.environ.get("EVENT_STORE_TIMEOUT_SECONDS", "20"))
+
 
 CONFIG = Config()
