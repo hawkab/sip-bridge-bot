@@ -25,7 +25,7 @@ def _mask_proxy(proxy_url: str | None) -> str:
         host = parsed.hostname or "?"
         port = f":{parsed.port}" if parsed.port else ""
         user = parsed.username or ""
-        auth = f"{user}:{parsed.password}@" if user else ""
+        auth = f"{user}:***@" if user else ""
         return f"{parsed.scheme}://{auth}{host}{port}"
     except Exception:
         return proxy_url
