@@ -1,6 +1,6 @@
-import os, shlex, subprocess, textwrap, time, re
+import os, shlex, subprocess, textwrap, time, re, uuid
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 from config import CONFIG
 
 # --- Shell helpers ---
@@ -22,6 +22,19 @@ def run_argv_loose(argv: List[str]) -> str:
     p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        text=True, timeout=60)
     return (p.stdout or "").strip() or f"exit={p.returncode}"
+
+def run_argv_result(argv: List[str], timeout: int = 60) -> Tuple[int, str]:
+    try:
+        p = subprocess.run(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+        )
+        return p.returncode, (p.stdout or "").strip() or f"exit={p.returncode}"
+    except Exception as e:
+        return 1, f"ERR: {e}"
 
 # --- Files / logs ---
 def file_tail(path: str, n: int=200) -> str:
@@ -130,9 +143,50 @@ def render_resp(r: dict) -> str:
     return line
 
 # --- Git update ---
+def _git_path_dirty(repo_dir: str, rel_path: str) -> bool:
+    code, out = run_argv_result(["git", "-C", repo_dir, "status", "--porcelain", "--", rel_path])
+    return code == 0 and bool(out.strip())
+
+def _git_stash_push_paths(repo_dir: str, paths: List[str], stash_name: str) -> Tuple[bool, str]:
+    argv = ["git", "-C", repo_dir, "stash", "push", "-m", stash_name, "--"] + paths
+    code, out = run_argv_result(argv)
+    return code == 0, out
+
+def _git_stash_pop_by_name(repo_dir: str, stash_name: str) -> Tuple[bool, str]:
+    code, out = run_argv_result(["git", "-C", repo_dir, "stash", "list"])
+    if code != 0:
+        return False, out
+
+    stash_ref = ""
+    for line in out.splitlines():
+        if stash_name in line:
+            stash_ref = line.split(":", 1)[0].strip()
+            break
+
+    if not stash_ref:
+        return True, f"stash '{stash_name}' not found in list; nothing to restore"
+
+    pop_code, pop_out = run_argv_result(["git", "-C", repo_dir, "stash", "pop", stash_ref], timeout=120)
+    return pop_code == 0, pop_out
+
+def _git_current_head(repo_dir: str) -> str:
+    code, out = run_argv_result(["git", "-C", repo_dir, "rev-parse", "--short", "HEAD"])
+    return out if code == 0 else "unknown"
+
+def _git_local_branch(repo_dir: str) -> str:
+    code, out = run_argv_result(["git", "-C", repo_dir, "rev-parse", "--abbrev-ref", "HEAD"])
+    return out if code == 0 else "unknown"
+
 def git_pull(repo_dir: str, branch: str) -> str:
     logs = []
-    def add(cmd): logs.append("$ " + " ".join(cmd) + "\n" + run_argv_loose(cmd))
+
+    def add(cmd):
+        logs.append("$ " + " ".join(cmd) + "\n" + run_argv_loose(cmd))
+
+    def add_result(cmd):
+        code, out = run_argv_result(cmd, timeout=120)
+        logs.append("$ " + " ".join(cmd) + "\n" + out)
+        return code, out
 
     # отметим каталог как safe для текущего пользователя
     add(["git","config","--global","--add","safe.directory", repo_dir])
@@ -144,8 +198,47 @@ def git_pull(repo_dir: str, branch: str) -> str:
 
     add(["git","-C",repo_dir,"remote","-v"])
     add(["git","-C",repo_dir,"fetch","--all","--prune"])
+
+    current_branch = _git_local_branch(repo_dir)
+    current_head = _git_current_head(repo_dir)
+    stash_name = f"sms-bot-update-{current_branch}-{current_head}-{uuid.uuid4().hex[:8]}"
+    proxy_rel_path = "proxy.txt"
+    proxy_stashed = False
+
+    if _git_path_dirty(repo_dir, proxy_rel_path):
+        logs.append(
+            "# proxy.txt has local modifications. Stashing it before pull so update is not blocked."
+        )
+        ok, out = _git_stash_push_paths(repo_dir, [proxy_rel_path], stash_name)
+        logs.append(
+            "$ git -C " + repo_dir + " stash push -m " + stash_name + " -- " + proxy_rel_path + "\n" + out
+        )
+        if not ok:
+            logs.append("# failed to stash proxy.txt; aborting update to avoid losing local proxy list")
+            return "\n\n".join(logs)
+        proxy_stashed = True
+    else:
+        logs.append("# proxy.txt has no local modifications; stash is not required")
+
     add(["git","-C",repo_dir,"checkout",branch])
-    add(["git","-C",repo_dir,"pull","--ff-only","origin",branch])
+    pull_code, _ = add_result(["git","-C",repo_dir,"pull","--ff-only","origin",branch])
+
+    if proxy_stashed:
+        logs.append("# restoring local proxy.txt changes after pull")
+        ok, out = _git_stash_pop_by_name(repo_dir, stash_name)
+        logs.append("$ git -C " + repo_dir + " stash pop <matched-stash>\n" + out)
+        if not ok:
+            logs.append(
+                "# stash pop failed. Most likely proxy.txt has merge conflicts with upstream. "
+                "Resolve proxy.txt manually and run 'git -C {repo} status'.".format(repo=repo_dir)
+            )
+
+    if pull_code != 0:
+        logs.append(
+            "# git pull failed. Working tree was not auto-reset. Inspect the log above; "
+            "if stash was created, it has already been restored or left in git stash list."
+        )
+
     return "\n\n".join(logs)
 
 def get_app_version_text() -> str:
