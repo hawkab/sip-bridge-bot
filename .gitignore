@@ -5,3 +5,4 @@ __pycache__/.pyc
 .idea/
 .iml
 proxy.txt
+failed_telegram.queue

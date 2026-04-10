@@ -84,7 +84,7 @@ def load_proxy_file(path: Path) -> list[str]:
         return []
     proxies = _unique(proxies)
     logger.info("Loaded %s usable proxies from file %s", len(proxies), path)
-
+    return proxies
 
 def save_proxy_file(path: Path, proxies: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
