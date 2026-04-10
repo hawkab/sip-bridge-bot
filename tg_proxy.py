@@ -72,14 +72,18 @@ def load_proxy_file(path: Path) -> list[str]:
 
     proxies = []
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        raw_text = path.read_text(encoding="utf-8")
+        logger.info("Reading proxy file: %s", path.resolve())
+        logger.info("Proxy file size: %s bytes", len(raw_text.encode('utf-8')))
+        for line in raw_text.splitlines():
             proxy = _normalize_proxy_line(line, default_scheme="http")
             if proxy:
                 proxies.append(proxy)
     except Exception:
         logger.exception("Failed to read proxy file: %s", path)
         return []
-    return _unique(proxies)
+    proxies = _unique(proxies)
+    logger.info("Loaded %s usable proxies from file %s", len(proxies), path)
 
 
 def save_proxy_file(path: Path, proxies: list[str]) -> None:
@@ -122,6 +126,24 @@ async def probe_telegram(token: str, proxy_url: str | None, timeout: float) -> t
         return False, f"{type(exc).__name__}: {exc}"
 
 
+async def probe_telegram_stable(
+    token: str,
+    proxy_url: str | None,
+    timeout: float,
+    attempts: int,
+    delay_seconds: float,
+) -> tuple[bool, str]:
+    last_details = ""
+    for attempt in range(1, max(attempts, 1) + 1):
+        ok, details = await probe_telegram(token, proxy_url, timeout)
+        last_details = details
+        if not ok:
+            return False, f"stability probe {attempt}/{attempts} failed: {details}"
+        if attempt < attempts and delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+    return True, last_details
+
+
 async def _download_text(url: str, timeout: float) -> str:
     async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=True, trust_env=False) as client:
         response = await client.get(url)
@@ -153,9 +175,12 @@ async def _download_github_proxies(urls: list[str], timeout: float) -> list[str]
 
 
 async def choose_working_proxy(config) -> str | None:
-    success, details = await probe_telegram(config.BOT_TOKEN, None, config.TG_PROXY_TEST_TIMEOUT)
+    success, details = await probe_telegram_stable(
+        config.BOT_TOKEN, None, config.TG_PROXY_TEST_TIMEOUT,
+        config.TG_PROXY_STABILITY_CHECKS, config.TG_PROXY_STABILITY_DELAY,
+    )
     if success:
-        logger.info("Telegram Bot API is reachable without proxy (%s)", details)
+        logger.info("Telegram Bot API is reachable without proxy after %s checks (%s)", config.TG_PROXY_STABILITY_CHECKS, details)
         return None
 
     logger.warning("Direct Telegram connection failed: %s", details)
@@ -172,6 +197,10 @@ async def choose_working_proxy(config) -> str | None:
     logger.info("Local proxy file did not yield a working proxy. Falling back to GitHub sources.")
     github_proxies = await _download_github_proxies(config.TG_PROXY_GITHUB_URLS, config.TG_PROXY_TEST_TIMEOUT)
     if github_proxies:
+        logger.warning(
+            "Replacing proxy file %s with %s proxies downloaded from GitHub",
+            config.TG_PROXY_FILE, len(github_proxies)
+        )
         save_proxy_file(config.TG_PROXY_FILE, github_proxies)
         selected = await _try_proxy_candidates(config, github_proxies, source="GitHub")
         if selected:
@@ -187,9 +216,15 @@ async def _try_proxy_candidates(config, proxies: list[str], source: str) -> str 
     logger.info("Trying %s proxy candidates from %s", len(proxies), source)
     for index, proxy in enumerate(proxies, start=1):
         masked = _mask_proxy(proxy)
-        ok, details = await probe_telegram(config.BOT_TOKEN, proxy, config.TG_PROXY_TEST_TIMEOUT)
+        ok, details = await probe_telegram_stable(
+            config.BOT_TOKEN,
+            proxy,
+            config.TG_PROXY_TEST_TIMEOUT,
+            config.TG_PROXY_STABILITY_CHECKS,
+            config.TG_PROXY_STABILITY_DELAY,
+        )
         if ok:
-            logger.info("Telegram connection succeeded via proxy #%s from %s: %s (%s)", index, source, masked, details)
+            logger.info("Telegram connection succeeded via proxy #%s from %s after %s checks: %s (%s)", index, source, config.TG_PROXY_STABILITY_CHECKS, masked, details)
             return proxy
         logger.warning("Telegram connection failed via proxy #%s from %s: %s (%s)", index, source, masked, details)
     return None

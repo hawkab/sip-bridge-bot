@@ -56,6 +56,8 @@ class Config:
         # Telegram proxy bootstrap
         self.TG_PROXY_FILE = Path(os.environ.get("TG_PROXY_FILE", str(Path(self.GIT_REPO_DIR) / "proxy.txt")))
         self.TG_PROXY_TEST_TIMEOUT = float(os.environ.get("TG_PROXY_TEST_TIMEOUT", "10"))
+        self.TG_PROXY_STABILITY_CHECKS = int(os.environ.get("TG_PROXY_STABILITY_CHECKS", "3"))
+        self.TG_PROXY_STABILITY_DELAY = float(os.environ.get("TG_PROXY_STABILITY_DELAY", "0.5"))
         raw_proxy_urls = os.environ.get(
             "TG_PROXY_GITHUB_URLS",
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt,"
@@ -63,5 +65,7 @@ class Config:
             "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
         )
         self.TG_PROXY_GITHUB_URLS = [x.strip() for x in raw_proxy_urls.split(",") if x.strip()]
+
+
 
 CONFIG = Config()
