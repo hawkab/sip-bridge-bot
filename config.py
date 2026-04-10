@@ -66,6 +66,28 @@ class Config:
         )
         self.TG_PROXY_GITHUB_URLS = [x.strip() for x in raw_proxy_urls.split(",") if x.strip()]
 
+        # Email transport
+        self.EMAIL_ENABLED = os.environ.get("EMAIL_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+        self.EMAIL_FROM = os.environ.get("EMAIL_FROM", "")
+        self.EMAIL_TO = os.environ.get("EMAIL_TO", "")
+        self.EMAIL_TO_LIST = [x.strip() for x in self.EMAIL_TO.split(",") if x.strip()]
+
+        self.EMAIL_SMTP_HOST = os.environ.get("EMAIL_SMTP_HOST", "")
+        self.EMAIL_SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "465"))
+        self.EMAIL_SMTP_USER = os.environ.get("EMAIL_SMTP_USER", "")
+        self.EMAIL_SMTP_PASS = os.environ.get("EMAIL_SMTP_PASS", "")
+        self.EMAIL_SMTP_SSL = os.environ.get("EMAIL_SMTP_SSL", "1").strip().lower() not in {"0", "false", "no", "off"}
+        self.EMAIL_SMTP_STARTTLS = os.environ.get("EMAIL_SMTP_STARTTLS", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+        self.EMAIL_IMAP_HOST = os.environ.get("EMAIL_IMAP_HOST", "")
+        self.EMAIL_IMAP_PORT = int(os.environ.get("EMAIL_IMAP_PORT", "993"))
+        self.EMAIL_IMAP_USER = os.environ.get("EMAIL_IMAP_USER", self.EMAIL_SMTP_USER)
+        self.EMAIL_IMAP_PASS = os.environ.get("EMAIL_IMAP_PASS", self.EMAIL_SMTP_PASS)
+        self.EMAIL_IMAP_MAILBOX = os.environ.get("EMAIL_IMAP_MAILBOX", "INBOX")
+        self.EMAIL_ALLOWED_SENDERS = os.environ.get("EMAIL_ALLOWED_SENDERS", self.EMAIL_TO)
+        self.EMAIL_ALLOWED_SENDERS_SET = {x.strip().lower() for x in self.EMAIL_ALLOWED_SENDERS.split(",") if x.strip()}
+        self.EMAIL_COMMAND_HASH = os.environ.get("EMAIL_COMMAND_HASH", "").strip()
+        self.EMAIL_POLL_INTERVAL = int(os.environ.get("EMAIL_POLL_INTERVAL", "30"))
 
 
 CONFIG = Config()

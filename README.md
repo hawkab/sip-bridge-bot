@@ -76,6 +76,27 @@
     # Если хотите автоклон при /update, когда репозитория нет:
     # GIT_REMOTE_URL=https://github.com/you/your-repo.git
 
+    # Email-канал (исходящие уведомления + входящие команды)
+    EMAIL_ENABLED=1
+    EMAIL_FROM=bot@example.com
+    EMAIL_TO=admin1@example.com,admin2@example.com
+
+    EMAIL_SMTP_HOST=smtp.example.com
+    EMAIL_SMTP_PORT=465
+    EMAIL_SMTP_USER=bot@example.com
+    EMAIL_SMTP_PASS=secret
+    EMAIL_SMTP_SSL=1
+    EMAIL_SMTP_STARTTLS=0
+
+    EMAIL_IMAP_HOST=imap.example.com
+    EMAIL_IMAP_PORT=993
+    EMAIL_IMAP_USER=bot@example.com
+    EMAIL_IMAP_PASS=secret
+    EMAIL_IMAP_MAILBOX=INBOX
+    EMAIL_ALLOWED_SENDERS=admin1@example.com,admin2@example.com
+    EMAIL_COMMAND_HASH=replace-with-secret-hash
+    EMAIL_POLL_INTERVAL=30
+
 ### 4) Права и группы
 
 - Разрешить боту читать `journald` (для `/logs_os` и `/logs_sip`, если файловых логов нет):
@@ -221,3 +242,20 @@
 - Не публикуйте `BOT_TOKEN` и `TG_*`.
 - Доступ к боту — только по `ADMIN_LOGIN`.
 - В sudoers добавляйте минимально необходимый набор команд и точные пути (`/usr/bin/systemctl` и т. п.).
+
+## Email-режим
+
+- Все события (SMS, CDR, запуск бота) отправляются и в Telegram, и на email.
+- Если Telegram временно недоступен, процесс не останавливается: email-канал продолжает работать.
+- Входящие письма из `EMAIL_ALLOWED_SENDERS` обрабатываются как админ-команды, если письмо содержит `EMAIL_COMMAND_HASH` и строку с командой, например `/status` или `/logs_sip 500`.
+- Для подтверждённой перезагрузки по email используйте `/reboot yes`.
+
+Пример темы письма:
+
+    replace-with-secret-hash /status
+
+Пример тела письма:
+
+    replace-with-secret-hash
+    /logs_sip 300
+
