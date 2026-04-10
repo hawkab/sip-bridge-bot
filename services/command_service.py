@@ -4,9 +4,9 @@ import subprocess
 import time
 from dataclasses import dataclass
 
-from config import CONFIG
-from delivery import CommandResult, ResponseItem
-from utils import (
+from bootstrap.config import CONFIG
+from domain.models import CommandResult, ResponseItem
+from services.system_ops import (
     _write_tmp,
     get_asterisk_logs,
     get_os_logs,

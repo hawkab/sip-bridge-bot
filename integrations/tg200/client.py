@@ -1,6 +1,5 @@
 import asyncio, urllib.parse, traceback, time
 from typing import Optional
-from config import CONFIG
 
 class YeastarSMSClient:
     """

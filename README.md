@@ -1,7 +1,7 @@
 # SipBridgeBot
 
-Телеграм-бот для домашнего/офисного VoIP-комплекса: присылает **входящие SMS** со шлюза Yeastar TG (режим *SMS Account* по TCP) в личный Telegram-чат и предоставляет набор **админ-команд** для сервера: статус, логи OS/Asterisk, управление WireGuard, перезапуск Asterisk, перезагрузка хоста и **дистанционное обновление** бота (`git pull` + `systemctl restart`).  
-Отправка SMS из Telegram намеренно **удалена**: бот работает только на приём SMS + админ-команды.
+Телеграм-бот для домашнего/офисного VoIP-комплекса: присылает **входящие SMS** со шлюза Yeastar TG (режим *SMS Account* по TCP) в личный Telegram-чат и предоставляет набор **админ-команд** для сервера: статус, логи OS/Asterisk, перезапуск Asterisk, перезагрузка хоста и **дистанционное обновление** бота (`git pull` + `systemctl restart`).  
+Отправка SMS из Telegram пока недоступна: бот работает только на приём SMS.
 
 ---
 
@@ -192,12 +192,19 @@
 ## Структура проекта
 
     /opt/sms/
-    ├─ bot.py           # точка входа
-    ├─ config.py        # загрузка .env, объект CONFIG
-    ├─ auth.py          # only_admin, кэш admin chat id
-    ├─ utils.py         # run/journal/tail, статус, git-пулл, версия из git
-    ├─ ys_client.py     # TCP-клиент Yeastar TG (приём SMS, события)
-    ├─ handlers.py      # Telegram-хэндлеры и их регистрация
+    ├─ bot.py                       # тонкая совместимая точка входа -> bootstrap.main
+    ├─ bootstrap/                 # запуск, wiring, конфигурация
+    │  ├─ main.py                   # сборка приложения и запуск фоновых задач
+    │  ├─ wiring.py                 # logging + Telegram ApplicationBuilder
+    │  └─ config.py                 # загрузка .env, объект CONFIG
+    ├─ domain/                      # модели предметной области
+    ├─ services/                  # прикладные сервисы и orchestration
+    ├─     ├─ integrations/
+    │  ├─ telegram/                 # transport, handlers, proxy
+    │  ├─ tg200/                    # клиент Yeastar TG
+    │  ├─ asterisk/                 # CDR monitor, recordings
+    │  └─ email/                    # IMAP reader, SMTP sender
+    ├─ workers/                     # фоновые worker hooks
     ├─ requirements.txt
     └─ README.md
 
