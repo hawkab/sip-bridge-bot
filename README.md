@@ -152,6 +152,17 @@
 | `GIT_REMOTE_URL`   |  нет | —                            | URL origin; нужен, если хотите автоклон при `/update` |
 
 > Комментарии в `.env` помещайте на **отдельные строки**, не после значения.
+>
+> Файл `proxy.txt` может содержать proxy в одном из форматов:
+>
+>     http://host:port
+>     socks5://host:port
+>     http://login:password@host:port
+>     socks5://login:password@host:port
+>     host:port:login:password
+>     host port login password
+>
+> Если логин/пароль содержат спецсимволы вроде `@`, `:` или пробелы, используйте полный URL-формат с уже закодированными значениями.
 
 ---
 

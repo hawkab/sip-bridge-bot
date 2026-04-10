@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 from telegram import Bot
@@ -30,6 +30,24 @@ def _mask_proxy(proxy_url: str | None) -> str:
     except Exception:
         return proxy_url
 
+def _build_proxy_url(
+    scheme: str,
+    host: str,
+    port: str,
+    username: str | None = None,
+    password: str | None = None,
+) -> str:
+    auth = ""
+    if username:
+        encoded_user = quote(username, safe="")
+        if password is None:
+            auth = f"{encoded_user}@"
+        else:
+            encoded_password = quote(password, safe="")
+            auth = f"{encoded_user}:{encoded_password}@"
+    return f"{scheme}://{auth}{host}:{port}"
+
+
 
 def _normalize_proxy_line(line: str, default_scheme: str = "http") -> str | None:
     value = line.strip()
@@ -41,19 +59,52 @@ def _normalize_proxy_line(line: str, default_scheme: str = "http") -> str | None
         logger.debug("Skip unsupported MTProto proxy entry: %s", value)
         return None
 
+    lowered = value.lower()
+    for explicit_scheme in ("http", "https", "socks5"):
+        prefix = f"{explicit_scheme} "
+        if lowered.startswith(prefix):
+            value = value.split(None, 1)[1].strip()
+            default_scheme = explicit_scheme
+            break
+
     if value.startswith(SUPPORTED_PROXY_SCHEMES):
         return value
-
-    if value.lower().startswith("socks5 "):
-        value = value.split(None, 1)[1].strip()
-        default_scheme = "socks5"
 
     if re.fullmatch(r"[^\s:]+:\d+", value):
         return f"{default_scheme}://{value}"
 
+    auth_host_match = re.fullmatch(r"(?P<auth>[^@\s]+)@(?P<host>[^:\s]+):(?P<port>\d+)", value)
+    if auth_host_match:
+        auth = auth_host_match.group("auth")
+        username, password = auth.split(":", 1) if ":" in auth else (auth, None)
+        return _build_proxy_url(
+            default_scheme,
+            auth_host_match.group("host"),
+            auth_host_match.group("port"),
+            username,
+            password,
+        )
+
+    colon_parts = value.split(":")
+    if len(colon_parts) == 4 and re.fullmatch(r"\d+", colon_parts[1]):
+        host, port, username, password = colon_parts
+        return _build_proxy_url(default_scheme, host, port, username, password)
+
+    if len(colon_parts) == 3 and re.fullmatch(r"\d+", colon_parts[1]):
+        host, port, username = colon_parts
+        return _build_proxy_url(default_scheme, host, port, username, None)
+
     parts = value.split()
     if len(parts) == 2 and re.fullmatch(r"\d+", parts[1]):
         return f"{default_scheme}://{parts[0]}:{parts[1]}"
+
+    if len(parts) == 4 and re.fullmatch(r"\d+", parts[1]):
+        host, port, username, password = parts
+        return _build_proxy_url(default_scheme, host, port, username, password)
+
+    if len(parts) == 3 and re.fullmatch(r"\d+", parts[1]):
+        host, port, username = parts
+        return _build_proxy_url(default_scheme, host, port, username, None)
 
     return None
 
