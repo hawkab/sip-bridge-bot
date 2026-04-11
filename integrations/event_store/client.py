@@ -115,17 +115,25 @@ class EventStoreClient:
             )
 
         view_url = str(payload.get("view_url") or "").strip() or None
-        ok_flag = bool(payload.get("ok"))
-        if response.is_success and ok_flag and view_url:
-            return CallStoreResult(ok=True, view_url=view_url)
-
-        error_message = str(payload.get("error") or payload.get("message") or "").strip()
-        if not error_message:
-            error_message = f"{response.status_code} {response.reason_phrase}".strip()
-
-        if response.is_success and ok_flag and not view_url:
+        saved_flag = self._coerce_bool(payload.get("saved"))
+        if response.is_success and saved_flag:
+            if view_url:
+                return CallStoreResult(ok=True, view_url=view_url)
             logger.error("Event store response for %s does not contain view_url: %s", event_kind, payload)
             return CallStoreResult(ok=False, error_message="view_url is missing in event store response")
+
+        error_message = str(payload.get("error") or payload.get("message") or "").strip() or None
+        if response.is_success and "saved" in payload:
+            logger.warning(
+                "Event store reported unsuccessful save for %s: status=%s payload=%s",
+                event_kind,
+                response.status_code,
+                payload,
+            )
+            return CallStoreResult(ok=False, view_url=view_url, error_message=error_message)
+
+        if not error_message:
+            error_message = f"{response.status_code} {response.reason_phrase}".strip()
 
         logger.error(
             "Event store returned an error for %s: status=%s payload=%s",
@@ -134,6 +142,14 @@ class EventStoreClient:
             payload,
         )
         return CallStoreResult(ok=False, view_url=view_url, error_message=error_message)
+
+    @staticmethod
+    def _coerce_bool(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
     def _try_parse_json(self, response: httpx.Response, event_kind: str) -> dict | None:
         try:
