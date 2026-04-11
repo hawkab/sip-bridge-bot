@@ -95,7 +95,7 @@ class Config:
         self.EVENT_STORE_TIMEOUT_SECONDS = float(os.environ.get("EVENT_STORE_TIMEOUT_SECONDS", "20"))
 
         self.CALL_TRANSCRIBE_ENABLED = os.environ.get("CALL_TRANSCRIBE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
-        self.CALL_TRANSCRIBE_MODEL = os.environ.get("CALL_TRANSCRIBE_MODEL", "medium").strip() or "small"
+        self.CALL_TRANSCRIBE_MODEL = os.environ.get("CALL_TRANSCRIBE_MODEL", "small").strip() or "small"
         self.CALL_TRANSCRIBE_DEVICE = os.environ.get("CALL_TRANSCRIBE_DEVICE", "cpu").strip() or "cpu"
         self.CALL_TRANSCRIBE_COMPUTE_TYPE = os.environ.get("CALL_TRANSCRIBE_COMPUTE_TYPE", "int8").strip() or "int8"
         self.CALL_TRANSCRIBE_BEAM_SIZE = int(os.environ.get("CALL_TRANSCRIBE_BEAM_SIZE", "5"))
