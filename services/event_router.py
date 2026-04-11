@@ -120,7 +120,7 @@ def _build_call_payload(rows: list[dict]) -> dict | None:
 def _append_event_link(text: str, view_url: str | None, label: str) -> str:
     if not view_url:
         return text
-    return f"{text}\n\n{label}: {view_url}"
+    return f"{text}\n\n<a href='{view_url}'>{label}</a>"
 
 
 def _safe_int(value) -> int:
