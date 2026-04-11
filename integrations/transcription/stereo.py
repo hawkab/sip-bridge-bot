@@ -184,6 +184,18 @@ def transcribe_channel(
         'vad_filter': vad_filter,
         'language': language,
         'word_timestamps': True,
+        # Telephony audio with repeated IVR prompts is a bad fit for carrying decoder text
+        # from the previous window into the next one. When the same phrase is spoken again
+        # after a pause, Whisper may "remember" it already saw that text and suppress a repeat.
+        'condition_on_previous_text': False,
+        # For narrow-band call audio, conservative Whisper thresholds can drop short but valid
+        # speech fragments as "no speech" or over-compressed output. Disabling these thresholds
+        # is safer here because we already work on isolated mono channels and optionally apply VAD.
+        'compression_ratio_threshold': None,
+        'log_prob_threshold': None,
+        'no_speech_threshold': None,
+        # Keep decoding deterministic for call records.
+        'temperature': 0.0,
     }
 
     if vad_filter:
