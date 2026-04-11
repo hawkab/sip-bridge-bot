@@ -7,6 +7,7 @@ from integrations.asterisk.recordings import resolve_recording_path
 from integrations.event_store.client import CallStoreResult, EventStoreClient
 from services.delivery_service import DeliveryHub
 from services.formatters.cdr import format_cdr_group
+from services.formatters.email_html import render_email_html
 from services.formatters.sms import format_sms
 
 
@@ -26,6 +27,7 @@ async def handle_cdr_group_notification(delivery: DeliveryHub, event_store: Even
     email_text = _append_event_link(msg, call_store_result.view_url, email_link_label)
     if not call_store_result.ok and call_store_result.error_message:
         email_text = f"{email_text}\n\nОшибка сохранения звонка: {call_store_result.error_message}"
+    email_html = render_email_html(email_text)
 
     await delivery.notify_event(
         subject="SipBridgeBot: CDR событие",
@@ -34,6 +36,7 @@ async def handle_cdr_group_notification(delivery: DeliveryHub, event_store: Even
         attachment_name=attachment_name,
         parse_mode="Markdown",
         email_text=email_text,
+        email_html=email_html,
         email_attachment_path=None if call_store_result.ok else attachment_path,
         email_attachment_name=None if call_store_result.ok else attachment_name,
     )
@@ -52,11 +55,13 @@ async def handle_sms_notification(delivery: DeliveryHub, event_store: EventStore
     event = SMSReceivedEvent(sender=sender, sim=sim, received_at=when, text=text)
     message_text = format_sms(event)
     view_url = await event_store.save_sms(timestamp=event.received_at, number=event.sender, text=event.text)
+    email_text = _append_event_link(message_text, view_url, "Карточка SMS")
     await delivery.notify_event(
         subject=f"SipBridgeBot: SMS от {event.sender}",
         text=message_text,
         parse_mode="Markdown",
-        email_text=_append_event_link(message_text, view_url, "Карточка SMS"),
+        email_text=email_text,
+        email_html=render_email_html(email_text),
     )
 
 

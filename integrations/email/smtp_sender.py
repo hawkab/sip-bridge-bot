@@ -6,6 +6,8 @@ import smtplib
 from email.message import EmailMessage
 from typing import Iterable
 
+from services.formatters.email_html import html_to_plain_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -13,18 +15,34 @@ class EmailSender:
     def __init__(self, config):
         self.config = config
 
-    async def send(self, recipients: Iterable[str], subject: str, body: str, attachments: list[tuple[str, str]]) -> None:
+    async def send(
+        self,
+        recipients: Iterable[str],
+        subject: str,
+        body: str,
+        attachments: list[tuple[str, str]],
+        body_html: str | None = None,
+    ) -> None:
         recipient_list = [x for x in recipients if x]
         if not recipient_list:
             return
-        await asyncio.to_thread(self._send_blocking, recipient_list, subject, body, attachments)
+        await asyncio.to_thread(self._send_blocking, recipient_list, subject, body, attachments, body_html)
 
-    def _send_blocking(self, recipients: list[str], subject: str, body: str, attachments: list[tuple[str, str]]) -> None:
+    def _send_blocking(
+        self,
+        recipients: list[str],
+        subject: str,
+        body: str,
+        attachments: list[tuple[str, str]],
+        body_html: str | None = None,
+    ) -> None:
         msg = EmailMessage()
         msg["From"] = self.config.EMAIL_FROM
         msg["To"] = ", ".join(recipients)
         msg["Subject"] = subject
-        msg.set_content(body)
+        msg.set_content(html_to_plain_text(body_html) if body_html else body)
+        if body_html:
+            msg.add_alternative(body_html, subtype="html")
 
         for attachment_path, attachment_name in attachments:
             try:

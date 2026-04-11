@@ -8,6 +8,7 @@ from integrations.email.smtp_sender import EmailSender
 from integrations.telegram.auth import get_admin_chat_id
 from integrations.telegram.queue_store import append_failed_message, load_failed_queue, store_failed_queue
 from integrations.telegram.sender import send_tg_item_direct
+from services.formatters.email_html import render_email_html
 from services.retry_policy import is_retryable_telegram_error
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class DeliveryHub:
         attachment_name: str | None = None,
         parse_mode: str | None = None,
         email_text: str | None = None,
+        email_html: str | None = None,
         email_attachment_path: str | None | object = _EMAIL_ATTACHMENT_DEFAULT,
         email_attachment_name: str | None = None,
     ) -> None:
@@ -58,7 +60,7 @@ class DeliveryHub:
         resolved_email_attachment_name = attachment_name if email_attachment_path is _EMAIL_ATTACHMENT_DEFAULT else email_attachment_name
         await asyncio.gather(
             self._notify_telegram(text, attachment_path, attachment_name, parse_mode=parse_mode),
-            self._notify_email(subject, email_text or text, resolved_email_attachment_path, resolved_email_attachment_name),
+            self._notify_email(subject, email_text or text, resolved_email_attachment_path, resolved_email_attachment_name, email_html),
             return_exceptions=True,
         )
 
@@ -152,18 +154,33 @@ class DeliveryHub:
     def _is_retryable_telegram_error(self, last_error: str | None) -> bool:
         return bool(last_error) and is_retryable_telegram_error(last_error)
 
-    async def _notify_email(self, subject: str, text: str, attachment_path: str | None, attachment_name: str | None) -> None:
+    async def _notify_email(
+        self,
+        subject: str,
+        text: str,
+        attachment_path: str | None,
+        attachment_name: str | None,
+        email_html: str | None = None,
+    ) -> None:
         if not self.is_email_enabled():
             return
         attachments = []
         if attachment_path:
             attachments.append((attachment_path, attachment_name or os.path.basename(attachment_path)))
-        await self._send_email(self.config.EMAIL_TO_LIST, subject, text, attachments)
+        await self._send_email(self.config.EMAIL_TO_LIST, subject, text, attachments, body_html=email_html)
 
-    async def _send_email(self, recipients: Iterable[str], subject: str, body: str, attachments: list[tuple[str, str]]) -> None:
+    async def _send_email(
+        self,
+        recipients: Iterable[str],
+        subject: str,
+        body: str,
+        attachments: list[tuple[str, str]],
+        body_html: str | None = None,
+    ) -> None:
         if not self.is_email_enabled():
             return
         recipient_list = [x for x in recipients if x]
         if not recipient_list:
             return
-        await self._email_sender.send(recipient_list, subject, body, attachments)
+        resolved_body_html = body_html or render_email_html(body)
+        await self._email_sender.send(recipient_list, subject, body, attachments, body_html=resolved_body_html)
