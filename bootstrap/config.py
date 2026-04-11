@@ -94,5 +94,19 @@ class Config:
         self.EVENT_STORE_AUTH_TOKEN = os.environ.get("EVENT_STORE_AUTH_TOKEN", "").strip()
         self.EVENT_STORE_TIMEOUT_SECONDS = float(os.environ.get("EVENT_STORE_TIMEOUT_SECONDS", "20"))
 
+        self.CALL_TRANSCRIBE_ENABLED = os.environ.get("CALL_TRANSCRIBE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+        self.CALL_TRANSCRIBE_MODEL = os.environ.get("CALL_TRANSCRIBE_MODEL", "small").strip() or "small"
+        self.CALL_TRANSCRIBE_DEVICE = os.environ.get("CALL_TRANSCRIBE_DEVICE", "cpu").strip() or "cpu"
+        self.CALL_TRANSCRIBE_COMPUTE_TYPE = os.environ.get("CALL_TRANSCRIBE_COMPUTE_TYPE", "int8").strip() or "int8"
+        self.CALL_TRANSCRIBE_BEAM_SIZE = int(os.environ.get("CALL_TRANSCRIBE_BEAM_SIZE", "5"))
+        self.CALL_TRANSCRIBE_MERGE_GAP = float(os.environ.get("CALL_TRANSCRIBE_MERGE_GAP", "0.8"))
+        self.CALL_TRANSCRIBE_VAD_FILTER = os.environ.get("CALL_TRANSCRIBE_VAD_FILTER", "1").strip().lower() not in {"0", "false", "no", "off"}
+        self.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS = int(os.environ.get("CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS", "500"))
+        self.CALL_TRANSCRIBE_LEFT_LABEL = os.environ.get("CALL_TRANSCRIBE_LEFT_LABEL", "SPEAKER_1").strip() or "SPEAKER_1"
+        self.CALL_TRANSCRIBE_RIGHT_LABEL = os.environ.get("CALL_TRANSCRIBE_RIGHT_LABEL", "SPEAKER_2").strip() or "SPEAKER_2"
+        self.CALL_TRANSCRIBE_ARTIFACTS_DIR = Path(
+            os.environ.get("CALL_TRANSCRIBE_ARTIFACTS_DIR", "/opt/sms/var/transcriptions")
+        )
+
 
 CONFIG = Config()

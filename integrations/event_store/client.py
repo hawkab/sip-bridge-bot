@@ -46,6 +46,7 @@ class EventStoreClient:
         duration: int,
         recording_path: str | None = None,
         recording_name: str | None = None,
+        transcription: str | None = None,
     ) -> CallStoreResult:
         if not self.is_call_enabled():
             return CallStoreResult(ok=False, error_message="call event store is disabled")
@@ -57,6 +58,8 @@ class EventStoreClient:
                 "number": number,
                 "duration": str(max(0, duration)),
             }
+            if transcription:
+                data["transcription"] = transcription
             mime_type, _ = mimetypes.guess_type(recording_name or recording_path)
             content_type = mime_type or "application/octet-stream"
             with open(recording_path, "rb") as source:
@@ -75,6 +78,8 @@ class EventStoreClient:
             "number": number,
             "duration": max(0, duration),
         }
+        if transcription:
+            payload["transcription"] = transcription
         return await self._post_json(self.config.EVENT_STORE_CALL_URL, payload, "call")
 
     async def _post_json(self, url: str, payload: dict, event_kind: str) -> CallStoreResult:

@@ -55,6 +55,12 @@ class DeliveryHub:
         email_html: str | None = None,
         email_attachment_path: str | None | object = _EMAIL_ATTACHMENT_DEFAULT,
         email_attachment_name: str | None = None,
+        telegram_followup_text: str | None = None,
+        telegram_followup_parse_mode: str | None = None,
+        telegram_followup_attachment_path: str | None = None,
+        telegram_followup_attachment_name: str | None = None,
+        telegram_followup_attachment_caption: str | None = None,
+        telegram_followup_attachment_parse_mode: str | None = None,
     ) -> None:
         resolved_email_attachment_path = attachment_path if email_attachment_path is _EMAIL_ATTACHMENT_DEFAULT else email_attachment_path
         resolved_email_attachment_name = attachment_name if email_attachment_path is _EMAIL_ATTACHMENT_DEFAULT else email_attachment_name
@@ -63,6 +69,15 @@ class DeliveryHub:
             self._notify_email(subject, email_text or text, resolved_email_attachment_path, resolved_email_attachment_name, email_html),
             return_exceptions=True,
         )
+        if telegram_followup_text:
+            await self._notify_telegram(telegram_followup_text, None, None, parse_mode=telegram_followup_parse_mode)
+        if telegram_followup_attachment_path:
+            await self._notify_telegram(
+                telegram_followup_attachment_caption or '',
+                telegram_followup_attachment_path,
+                telegram_followup_attachment_name,
+                parse_mode=telegram_followup_attachment_parse_mode,
+            )
 
     async def reply_telegram(self, chat_id: int, result: CommandResult) -> None:
         for item in result.items:

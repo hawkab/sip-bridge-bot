@@ -9,22 +9,38 @@ from services.delivery_service import DeliveryHub
 from services.formatters.cdr import format_cdr_group
 from services.formatters.email_html import render_email_html
 from services.formatters.sms import format_sms
+from services.formatters.transcription import format_transcription
 
 
-async def handle_cdr_group_notification(delivery: DeliveryHub, event_store: EventStoreClient, rows: list[dict]) -> None:
+async def handle_cdr_group_notification(delivery: DeliveryHub, event_store: EventStoreClient, transcriber, transcription_pdf_renderer, rows: list[dict]) -> None:
     event = CdrGroupEvent(rows=rows)
     msg = format_cdr_group(event.rows)
     if not msg:
         return
+
     answered_record = next((record for record in event.rows if record.get("disposition") == "ANSWERED"), None)
     attachment_path = None
     attachment_name = None
     if answered_record:
         attachment_path, attachment_name = resolve_recording_path(answered_record.get("uniqueid"))
 
-    call_store_result = await _save_call_event(event_store, event.rows, attachment_path, attachment_name)
+    transcription_text = await _transcribe_call_recording(transcriber, attachment_path)
+    transcription_pdf_path, transcription_pdf_name = _build_transcription_pdf(
+        transcription_pdf_renderer,
+        attachment_path,
+        transcription_text,
+    )
+    call_store_result = await _save_call_event(
+        event_store,
+        event.rows,
+        attachment_path,
+        attachment_name,
+        transcription_text,
+    )
+
     email_link_label = "Карточка звонка" if call_store_result.ok else "Карточка ошибки"
-    email_text = _append_event_link(msg, call_store_result.view_url, email_link_label)
+    email_text = _append_transcription(msg, transcription_text)
+    email_text = _append_event_link(email_text, call_store_result.view_url, email_link_label)
     if not call_store_result.ok and call_store_result.error_message:
         email_text = f"{email_text}\n\nОшибка сохранения звонка: {call_store_result.error_message}"
     email_html = render_email_html(email_text)
@@ -34,17 +50,21 @@ async def handle_cdr_group_notification(delivery: DeliveryHub, event_store: Even
         text=msg,
         attachment_path=attachment_path,
         attachment_name=attachment_name,
-        parse_mode="Markdown",
+        parse_mode=None,
         email_text=email_text,
         email_html=email_html,
         email_attachment_path=None if call_store_result.ok else attachment_path,
         email_attachment_name=None if call_store_result.ok else attachment_name,
+        telegram_followup_attachment_path=transcription_pdf_path,
+        telegram_followup_attachment_name=transcription_pdf_name,
+        telegram_followup_attachment_caption="Транскрибация звонка",
+        telegram_followup_attachment_parse_mode=None,
     )
 
 
-async def start_cdr_monitor(delivery: DeliveryHub, event_store: EventStoreClient):
+async def start_cdr_monitor(delivery: DeliveryHub, event_store: EventStoreClient, transcriber, transcription_pdf_renderer):
     async def cdr_group_callback(group: list):
-        await handle_cdr_group_notification(delivery, event_store, group)
+        await handle_cdr_group_notification(delivery, event_store, transcriber, transcription_pdf_renderer, group)
 
     cdr_file = "/var/log/asterisk/cdr-csv/Master.csv"
     monitor = CDRMonitor(cdr_file, cdr_group_callback, check_interval=5.0, group_timeout=30.0)
@@ -82,6 +102,7 @@ async def _save_call_event(
     rows: list[dict],
     recording_path: str | None,
     recording_name: str | None,
+    transcription_text: str | None,
 ) -> CallStoreResult:
     payload = _build_call_payload(rows)
     if not payload:
@@ -93,7 +114,26 @@ async def _save_call_event(
         duration=payload["duration"],
         recording_path=recording_path,
         recording_name=recording_name,
+        transcription=transcription_text,
     )
+
+
+async def _transcribe_call_recording(transcriber, attachment_path: str | None) -> str | None:
+    if transcriber is None or not attachment_path:
+        return None
+
+    payload = await transcriber.transcribe_recording(attachment_path)
+    if not payload:
+        return None
+
+    transcription_text = format_transcription(payload.get("conversation"))
+    return transcription_text or None
+
+
+def _build_transcription_pdf(transcription_pdf_renderer, attachment_path: str | None, transcription_text: str | None) -> tuple[str | None, str | None]:
+    if transcription_pdf_renderer is None or not attachment_path or not transcription_text:
+        return None, None
+    return transcription_pdf_renderer.render_for_recording(attachment_path, transcription_text)
 
 
 def _build_call_payload(rows: list[dict]) -> dict | None:
@@ -120,6 +160,12 @@ def _build_call_payload(rows: list[dict]) -> dict | None:
         "number": number,
         "duration": duration,
     }
+
+
+def _append_transcription(text: str, transcription_text: str | None) -> str:
+    if not transcription_text:
+        return text
+    return f"{text}\n\nТранскрибация:\n{transcription_text}"
 
 
 def _append_event_link(text: str, view_url: str | None, label: str) -> str:

@@ -1,2 +1,4 @@
 python-telegram-bot[socks]==20.8
 httpx[socks]
+faster-whisper
+reportlab
