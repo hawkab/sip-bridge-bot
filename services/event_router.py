@@ -26,6 +26,7 @@ async def handle_cdr_group_notification(delivery: DeliveryHub, event_store: Even
         attachment_path, attachment_name = resolve_recording_path(answered_record.get('uniqueid'))
 
     transcription_payload = await _transcribe_call_recording(transcriber, attachment_path)
+    transcription_payload = _apply_call_speaker_aliases(event.rows, transcription_payload)
     transcription_text = format_transcription((transcription_payload or {}).get('conversation'))
     transcription_text = transcription_text or None
     transcription_pdf_path, transcription_pdf_name = _build_transcription_pdf(
@@ -155,6 +156,54 @@ def _build_call_payload(rows: list[dict]) -> dict | None:
         'number': number,
         'duration': duration,
     }
+
+
+def _apply_call_speaker_aliases(rows: list[dict], transcription_payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not transcription_payload:
+        return transcription_payload
+
+    payload = dict(transcription_payload)
+    channels = dict(payload.get('channels') or {})
+    conversation = [dict(item) for item in (payload.get('conversation') or [])]
+
+    call_payload = _build_call_payload(rows)
+    if not call_payload:
+        payload['channels'] = channels
+        payload['conversation'] = conversation
+        return payload
+
+    first = rows[0] if rows else {}
+    context = str(first.get('dcontext') or '')
+    is_inbound = 'inbound-gsm' in context
+    remote_number = str(call_payload.get('number') or '').strip() or 'Абонент'
+
+    alias_by_channel = {
+        'left': remote_number if is_inbound else 'Я',
+        'right': 'Я' if is_inbound else remote_number,
+    }
+    alias_by_speaker = {
+        'SPEAKER_1': alias_by_channel['left'],
+        'SPEAKER_2': alias_by_channel['right'],
+    }
+
+    for channel_name, channel_meta in channels.items():
+        if not isinstance(channel_meta, dict):
+            continue
+        meta = dict(channel_meta)
+        meta['speaker'] = alias_by_channel.get(channel_name, meta.get('speaker'))
+        channels[channel_name] = meta
+
+    for item in conversation:
+        channel_name = str(item.get('channel') or '').strip().lower()
+        current_speaker = str(item.get('speaker') or '').strip()
+        if channel_name in alias_by_channel:
+            item['speaker'] = alias_by_channel[channel_name]
+        elif current_speaker in alias_by_speaker:
+            item['speaker'] = alias_by_speaker[current_speaker]
+
+    payload['channels'] = channels
+    payload['conversation'] = conversation
+    return payload
 
 
 def _append_transcription(text: str, transcription_text: str | None) -> str:
