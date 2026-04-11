@@ -230,28 +230,25 @@ def split_segment_into_phrases(
     punctuation_gap_seconds: float,
     max_phrase_seconds: float,
 ) -> list[dict[str, Any]]:
-    words = []
-    for word in getattr(seg, 'words', None) or []:
-        start = getattr(word, 'start', None)
-        end = getattr(word, 'end', None)
-        token = str(getattr(word, 'word', '') or '')
-        if start is None or end is None or token == '':
-            continue
-        words.append(
-            {
-                'start': float(start),
-                'end': float(end),
-                'token': token,
-            }
-        )
+    seg_start = float(getattr(seg, 'start', 0.0) or 0.0)
+    seg_end = float(getattr(seg, 'end', seg_start) or seg_start)
+    seg_text = normalize_phrase_text(str(getattr(seg, 'text', '') or ''))
+    words = extract_segment_words(seg, seg_start=seg_start, seg_end=seg_end)
 
     if not words:
-        text = normalize_phrase_text(str(getattr(seg, 'text', '') or ''))
-        if not text:
+        if not seg_text:
             return []
-        start = round(float(getattr(seg, 'start', 0.0) or 0.0), 3)
-        end = round(float(getattr(seg, 'end', start) or start), 3)
-        return [build_conversation_row(speaker, channel_name, start, end, text)]
+        return [build_conversation_row(speaker, channel_name, seg_start, seg_end, seg_text)]
+
+    if seg_text and _is_word_coverage_too_low(words, seg_text):
+        logger.warning(
+            'Transcription words coverage is low, fallback to whole segment: speaker=%s channel=%s start=%.3f end=%.3f',
+            speaker,
+            channel_name,
+            seg_start,
+            seg_end,
+        )
+        return [build_conversation_row(speaker, channel_name, seg_start, seg_end, seg_text)]
 
     rows: list[dict[str, Any]] = []
     bucket: list[dict[str, Any]] = []
@@ -262,8 +259,8 @@ def split_segment_into_phrases(
             continue
 
         previous_word = bucket[-1]
-        gap = float(word['start']) - float(previous_word['end'])
-        duration = float(previous_word['end']) - float(bucket[0]['start'])
+        gap = max(0.0, float(word['start']) - float(previous_word['end']))
+        duration = max(0.0, float(previous_word['end']) - float(bucket[0]['start']))
         previous_token = str(previous_word['token'])
 
         should_split = False
@@ -271,7 +268,7 @@ def split_segment_into_phrases(
             should_split = True
         elif gap >= punctuation_gap_seconds and _looks_like_sentence_end(previous_token):
             should_split = True
-        elif duration >= max_phrase_seconds and gap >= min(0.25, punctuation_gap_seconds):
+        elif max_phrase_seconds > 0 and duration >= max_phrase_seconds and gap >= min(0.25, punctuation_gap_seconds):
             should_split = True
 
         if should_split:
@@ -288,6 +285,71 @@ def split_segment_into_phrases(
             rows.append(row)
 
     return rows
+
+
+def extract_segment_words(seg: Any, *, seg_start: float, seg_end: float) -> list[dict[str, Any]]:
+    raw_words: list[dict[str, Any]] = []
+    for word in getattr(seg, 'words', None) or []:
+        token = str(getattr(word, 'word', '') or '')
+        if token == '':
+            continue
+        start = getattr(word, 'start', None)
+        end = getattr(word, 'end', None)
+        raw_words.append(
+            {
+                'token': token,
+                'start': float(start) if start is not None else None,
+                'end': float(end) if end is not None else None,
+            }
+        )
+
+    if not raw_words:
+        return []
+
+    next_known_start: list[float | None] = [None] * len(raw_words)
+    known_start = None
+    for index in range(len(raw_words) - 1, -1, -1):
+        word = raw_words[index]
+        if word['start'] is not None:
+            known_start = float(word['start'])
+        next_known_start[index] = known_start
+
+    previous_end = seg_start
+    repaired: list[dict[str, Any]] = []
+    for index, word in enumerate(raw_words):
+        start = word['start']
+        end = word['end']
+
+        if start is None:
+            start = previous_end if previous_end is not None else seg_start
+
+        candidate_next_start = next_known_start[index + 1] if index + 1 < len(next_known_start) else None
+        if end is None:
+            if candidate_next_start is not None and candidate_next_start >= float(start):
+                end = candidate_next_start
+            else:
+                end = seg_end
+
+        start = float(start)
+        end = float(end)
+        if start < seg_start:
+            start = seg_start
+        if start > seg_end:
+            start = seg_end
+        if end < start:
+            end = start
+        if end > seg_end:
+            end = seg_end
+
+        repaired_word = {
+            'token': str(word['token']),
+            'start': round(start, 3),
+            'end': round(end, 3),
+        }
+        repaired.append(repaired_word)
+        previous_end = max(previous_end, end)
+
+    return repaired
 
 
 def build_row_from_words(speaker: str, channel_name: str, words: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -324,6 +386,21 @@ def normalize_phrase_text(text: str) -> str:
 
 def _looks_like_sentence_end(token: str) -> bool:
     return bool(_SENTENCE_END_RE.search(token.strip()))
+
+
+def _compact_text(value: str) -> str:
+    return re.sub(r'[^\wа-яё]+', '', value.lower(), flags=re.IGNORECASE)
+
+
+def _is_word_coverage_too_low(words: list[dict[str, Any]], seg_text: str) -> bool:
+    compact_segment = _compact_text(seg_text)
+    if compact_segment == '':
+        return False
+    compact_words = _compact_text(''.join(str(word['token']) for word in words))
+    if compact_words == '':
+        return True
+    coverage_ratio = len(compact_words) / max(1, len(compact_segment))
+    return coverage_ratio < 0.82
 
 
 def merge_adjacent_segments(conversation: list[dict[str, Any]], max_gap: float) -> list[dict[str, Any]]:

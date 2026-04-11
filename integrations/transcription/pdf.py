@@ -126,7 +126,6 @@ class TranscriptionPdfRenderer:
         story = [
             Paragraph('Транскрибация звонка', title_style),
             Paragraph(escape(f'Файл записи: {recording_file_name}'), meta_style),
-            Paragraph('Формат: сообщения выстроены по времени, как переписка в чате.', legend_style),
             Spacer(1, 2 * mm),
         ]
 

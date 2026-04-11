@@ -102,7 +102,7 @@ class Config:
         self.CALL_TRANSCRIBE_MERGE_GAP = float(os.environ.get("CALL_TRANSCRIBE_MERGE_GAP", "0.15"))
         self.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS = float(os.environ.get("CALL_TRANSCRIBE_SPLIT_GAP_SECONDS", "0.8"))
         self.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS = float(os.environ.get("CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS", "0.35"))
-        self.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS = float(os.environ.get("CALL_TRANSCRIBE_MAX_PHRASE_SECONDS", "10"))
+        self.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS = float(os.environ.get("CALL_TRANSCRIBE_MAX_PHRASE_SECONDS", "0"))
         self.CALL_TRANSCRIBE_VAD_FILTER = os.environ.get("CALL_TRANSCRIBE_VAD_FILTER", "1").strip().lower() not in {"0", "false", "no", "off"}
         self.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS = int(os.environ.get("CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS", "500"))
         self.CALL_TRANSCRIBE_LEFT_LABEL = os.environ.get("CALL_TRANSCRIBE_LEFT_LABEL", "SPEAKER_1").strip() or "SPEAKER_1"

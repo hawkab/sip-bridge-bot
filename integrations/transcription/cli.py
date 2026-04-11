@@ -19,7 +19,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--device', default='cpu', help='Inference device. Default: cpu')
     parser.add_argument('--compute-type', default='int8', help='Compute type. Default: int8')
     parser.add_argument('--beam-size', type=int, default=5, help='Beam size. Default: 5')
-    parser.add_argument('--merge-gap', type=float, default=0.8, help='Merge adjacent segments gap in seconds. Default: 0.8')
+    parser.add_argument('--merge-gap', type=float, default=0.15, help='Merge adjacent segments gap in seconds. Default: 0.15')
+    parser.add_argument('--split-gap-seconds', type=float, default=0.8, help='Split phrase when pause is at least this many seconds. Default: 0.8')
+    parser.add_argument('--punctuation-gap-seconds', type=float, default=0.35, help='Split after punctuation when pause is at least this many seconds. Default: 0.35')
+    parser.add_argument('--max-phrase-seconds', type=float, default=0.0, help='Optional hard cap for a single phrase. 0 disables the cap. Default: 0')
     parser.add_argument('--left-label', default='SPEAKER_1', help='Label for left channel speaker. Default: SPEAKER_1')
     parser.add_argument('--right-label', default='SPEAKER_2', help='Label for right channel speaker. Default: SPEAKER_2')
     parser.add_argument('--vad-filter', action=argparse.BooleanOptionalAction, default=True, help='Enable or disable VAD filter. Default: enabled')
@@ -36,6 +39,9 @@ def build_cli_config(args: argparse.Namespace) -> SimpleNamespace:
         CALL_TRANSCRIBE_COMPUTE_TYPE=args.compute_type,
         CALL_TRANSCRIBE_BEAM_SIZE=args.beam_size,
         CALL_TRANSCRIBE_MERGE_GAP=args.merge_gap,
+        CALL_TRANSCRIBE_SPLIT_GAP_SECONDS=args.split_gap_seconds,
+        CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS=args.punctuation_gap_seconds,
+        CALL_TRANSCRIBE_MAX_PHRASE_SECONDS=args.max_phrase_seconds,
         CALL_TRANSCRIBE_VAD_FILTER=args.vad_filter,
         CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS=args.vad_min_silence_ms,
         CALL_TRANSCRIBE_LEFT_LABEL=args.left_label,
