@@ -61,17 +61,28 @@ class DeliveryHub:
         telegram_followup_attachment_name: str | None = None,
         telegram_followup_attachment_caption: str | None = None,
         telegram_followup_attachment_parse_mode: str | None = None,
+        telegram_bundle_attachment_path: str | None = None,
+        telegram_bundle_attachment_name: str | None = None,
     ) -> None:
         resolved_email_attachment_path = attachment_path if email_attachment_path is _EMAIL_ATTACHMENT_DEFAULT else email_attachment_path
         resolved_email_attachment_name = attachment_name if email_attachment_path is _EMAIL_ATTACHMENT_DEFAULT else email_attachment_name
+
+        should_bundle_telegram_files = bool(attachment_path and telegram_bundle_attachment_path)
         await asyncio.gather(
-            self._notify_telegram(text, attachment_path, attachment_name, parse_mode=parse_mode),
+            self._notify_telegram(
+                text,
+                attachment_path,
+                attachment_name,
+                parse_mode=parse_mode,
+                bundled_attachment_path=telegram_bundle_attachment_path if should_bundle_telegram_files else None,
+                bundled_attachment_name=telegram_bundle_attachment_name if should_bundle_telegram_files else None,
+            ),
             self._notify_email(subject, email_text or text, resolved_email_attachment_path, resolved_email_attachment_name, email_html),
             return_exceptions=True,
         )
         if telegram_followup_text:
             await self._notify_telegram(telegram_followup_text, None, None, parse_mode=telegram_followup_parse_mode)
-        if telegram_followup_attachment_path:
+        if telegram_followup_attachment_path and not should_bundle_telegram_files:
             await self._notify_telegram(
                 telegram_followup_attachment_caption or '',
                 telegram_followup_attachment_path,
@@ -85,38 +96,56 @@ class DeliveryHub:
 
     async def reply_email(self, recipient: str, subject: str, result: CommandResult) -> None:
         if not self.is_email_enabled():
-            logger.warning("Email is disabled; cannot reply to %s", recipient)
+            logger.warning('Email is disabled; cannot reply to %s', recipient)
             return
         body_parts = []
         attachments = []
         for item in result.items:
-            if item.kind == "text" and item.text:
+            if item.kind == 'text' and item.text:
                 body_parts.append(item.text)
-            elif item.kind == "file" and item.attachment_path:
+            elif item.kind == 'file' and item.attachment_path:
                 attachments.append((item.attachment_path, item.attachment_name or os.path.basename(item.attachment_path)))
                 if item.caption:
                     body_parts.append(item.caption)
-        body = "\n\n".join(part for part in body_parts if part).strip() or "Готово."
+        body = '\n\n'.join(part for part in body_parts if part).strip() or 'Готово.'
         await self._send_email([recipient], subject, body, attachments)
 
-    async def _notify_telegram(self, text: str, attachment_path: str | None, attachment_name: str | None, parse_mode: str | None = None) -> None:
+    async def _notify_telegram(
+        self,
+        text: str,
+        attachment_path: str | None,
+        attachment_name: str | None,
+        parse_mode: str | None = None,
+        bundled_attachment_path: str | None = None,
+        bundled_attachment_name: str | None = None,
+    ) -> None:
         chat_id = get_admin_chat_id()
         if not chat_id:
             return
-        item = ResponseItem(
-            kind="file" if attachment_path else "text",
-            text=None if attachment_path else text,
-            parse_mode=parse_mode,
-            attachment_path=attachment_path,
-            attachment_name=attachment_name,
-            caption=text if attachment_path else None,
-        )
+
+        if attachment_path and bundled_attachment_path:
+            item = ResponseItem(
+                kind='file_group',
+                parse_mode=parse_mode,
+                caption=text,
+                attachment_paths=[attachment_path, bundled_attachment_path],
+                attachment_names=[attachment_name, bundled_attachment_name],
+            )
+        else:
+            item = ResponseItem(
+                kind='file' if attachment_path else 'text',
+                text=None if attachment_path else text,
+                parse_mode=parse_mode,
+                attachment_path=attachment_path,
+                attachment_name=attachment_name,
+                caption=text if attachment_path else None,
+            )
         await self._deliver_telegram_item(chat_id, item)
 
     async def _deliver_telegram_item(self, chat_id: int, item: ResponseItem) -> None:
         app = self._telegram_app
         if not app:
-            append_failed_message(chat_id, item, "telegram transport is unavailable")
+            append_failed_message(chat_id, item, 'telegram transport is unavailable')
             return
         try:
             async with self._telegram_send_lock:
@@ -127,9 +156,9 @@ class DeliveryHub:
                 if self._is_retryable_telegram_error(last_error):
                     append_failed_message(chat_id, item, last_error)
                     return
-                logger.error("Telegram item is non-retryable for chat_id=%s: %s", chat_id, last_error)
+                logger.error('Telegram item is non-retryable for chat_id=%s: %s', chat_id, last_error)
         except Exception:
-            logger.exception("Failed to deliver Telegram item to chat_id=%s", chat_id)
+            logger.exception('Failed to deliver Telegram item to chat_id=%s', chat_id)
 
     async def _flush_pending_telegram_messages_locked(self) -> None:
         app = self._telegram_app
@@ -138,7 +167,7 @@ class DeliveryHub:
         remaining = list(load_failed_queue())
         if not remaining:
             return
-        logger.info("Telegram queue flush started: %s item(s)", len(remaining))
+        logger.info('Telegram queue flush started: %s item(s)', len(remaining))
         while remaining:
             queued = remaining[0]
             delivered, retryable_failure = await self._send_queued_message(app, queued)
@@ -147,10 +176,10 @@ class DeliveryHub:
                 store_failed_queue(remaining)
                 continue
             if retryable_failure:
-                logger.warning("Telegram queue flush stopped on retryable failure for chat_id=%s", queued.chat_id)
+                logger.warning('Telegram queue flush stopped on retryable failure for chat_id=%s', queued.chat_id)
                 break
             logger.error(
-                "Telegram queue item dropped as non-retryable for chat_id=%s created_at=%s",
+                'Telegram queue item dropped as non-retryable for chat_id=%s created_at=%s',
                 queued.chat_id,
                 queued.created_at,
             )
@@ -163,7 +192,7 @@ class DeliveryHub:
             return True, False
         if self._is_retryable_telegram_error(last_error):
             return False, True
-        logger.error("Telegram queue item is non-retryable for chat_id=%s: %s", queued.chat_id, last_error)
+        logger.error('Telegram queue item is non-retryable for chat_id=%s: %s', queued.chat_id, last_error)
         return False, False
 
     def _is_retryable_telegram_error(self, last_error: str | None) -> bool:

@@ -5,14 +5,15 @@ import os
 from pathlib import Path
 from threading import Lock
 
+from reportlab.lib import colors
 from reportlab.lib.colors import HexColor
-from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from xml.sax.saxutils import escape
 
 logger = logging.getLogger(__name__)
@@ -25,14 +26,19 @@ _FONT_CANDIDATES = (
     '/usr/share/fonts/dejavu/DejaVuSans.ttf',
 )
 
+_BUBBLE_COLORS = {
+    'left': HexColor('#f3f4f6'),
+    'right': HexColor('#dbeafe'),
+}
+
 
 class TranscriptionPdfRenderer:
     def __init__(self, config):
         self.config = config
 
-    def render_for_recording(self, recording_path: str | Path, transcription_text: str) -> tuple[str | None, str | None]:
-        text = (transcription_text or '').strip()
-        if not text:
+    def render_for_recording(self, recording_path: str | Path, conversation: list[dict] | None) -> tuple[str | None, str | None]:
+        rows = [row for row in (conversation or []) if str(row.get('text') or '').strip()]
+        if not rows:
             return None, None
 
         source_path = Path(recording_path)
@@ -41,10 +47,10 @@ class TranscriptionPdfRenderer:
 
         pdf_name = f'{source_path.stem}-transcription.pdf'
         pdf_path = target_dir / pdf_name
-        self._build_pdf(pdf_path, source_path.name, text)
+        self._build_pdf(pdf_path, source_path.name, rows)
         return str(pdf_path), pdf_name
 
-    def _build_pdf(self, pdf_path: Path, recording_file_name: str, transcription_text: str) -> None:
+    def _build_pdf(self, pdf_path: Path, recording_file_name: str, conversation: list[dict]) -> None:
         font_name = _ensure_unicode_font()
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
@@ -54,8 +60,8 @@ class TranscriptionPdfRenderer:
             fontSize=16,
             leading=20,
             alignment=TA_LEFT,
-            textColor=HexColor('#1f2937'),
-            spaceAfter=8,
+            textColor=HexColor('#111827'),
+            spaceAfter=6,
         )
         meta_style = ParagraphStyle(
             'TranscriptionMeta',
@@ -64,25 +70,54 @@ class TranscriptionPdfRenderer:
             fontSize=9,
             leading=12,
             textColor=HexColor('#6b7280'),
-            spaceAfter=10,
+            spaceAfter=4,
         )
-        body_style = ParagraphStyle(
-            'TranscriptionBody',
+        bubble_text_style = ParagraphStyle(
+            'TranscriptionBubbleText',
             parent=styles['BodyText'],
             fontName=font_name,
             fontSize=10.5,
-            leading=15,
+            leading=14,
             textColor=HexColor('#111827'),
-            spaceAfter=6,
+            spaceAfter=0,
+        )
+        bubble_meta_left_style = ParagraphStyle(
+            'TranscriptionBubbleMetaLeft',
+            parent=styles['BodyText'],
+            fontName=font_name,
+            fontSize=8.5,
+            leading=11,
+            textColor=HexColor('#4b5563'),
+            alignment=TA_LEFT,
+            spaceAfter=3,
+        )
+        bubble_meta_right_style = ParagraphStyle(
+            'TranscriptionBubbleMetaRight',
+            parent=styles['BodyText'],
+            fontName=font_name,
+            fontSize=8.5,
+            leading=11,
+            textColor=HexColor('#334155'),
+            alignment=TA_RIGHT,
+            spaceAfter=3,
+        )
+        legend_style = ParagraphStyle(
+            'TranscriptionLegend',
+            parent=styles['BodyText'],
+            fontName=font_name,
+            fontSize=8.5,
+            leading=11,
+            textColor=HexColor('#6b7280'),
+            spaceAfter=8,
         )
 
         doc = SimpleDocTemplate(
             str(pdf_path),
             pagesize=A4,
-            leftMargin=18 * mm,
-            rightMargin=18 * mm,
-            topMargin=18 * mm,
-            bottomMargin=16 * mm,
+            leftMargin=16 * mm,
+            rightMargin=16 * mm,
+            topMargin=16 * mm,
+            bottomMargin=14 * mm,
             title='Транскрибация звонка',
             author='sip-bridge-bot',
             subject='Транскрибация разговора',
@@ -91,16 +126,78 @@ class TranscriptionPdfRenderer:
         story = [
             Paragraph('Транскрибация звонка', title_style),
             Paragraph(escape(f'Файл записи: {recording_file_name}'), meta_style),
+            Paragraph('Формат: сообщения выстроены по времени, как переписка в чате.', legend_style),
             Spacer(1, 2 * mm),
         ]
 
-        for line in transcription_text.splitlines():
-            value = line.strip()
-            if not value:
-                continue
-            story.append(Paragraph(escape(value), body_style))
+        for row in conversation:
+            bubble = self._build_chat_bubble(
+                row=row,
+                bubble_text_style=bubble_text_style,
+                bubble_meta_left_style=bubble_meta_left_style,
+                bubble_meta_right_style=bubble_meta_right_style,
+            )
+            story.append(bubble)
+            story.append(Spacer(1, 2.3 * mm))
 
         doc.build(story)
+
+    def _build_chat_bubble(
+        self,
+        *,
+        row: dict,
+        bubble_text_style: ParagraphStyle,
+        bubble_meta_left_style: ParagraphStyle,
+        bubble_meta_right_style: ParagraphStyle,
+    ) -> Table:
+        speaker = str(row.get('speaker') or 'SPEAKER')
+        channel = str(row.get('channel') or 'left')
+        start_hms = str(row.get('start_hms') or '')
+        end_hms = str(row.get('end_hms') or '')
+        text = escape(str(row.get('text') or '').strip())
+        side = 'right' if channel == 'right' else 'left'
+        meta_style = bubble_meta_right_style if side == 'right' else bubble_meta_left_style
+        align = TA_RIGHT if side == 'right' else TA_LEFT
+        meta = escape(f'{speaker}  {start_hms} - {end_hms}'.strip())
+
+        bubble_inner = Table(
+            [[Paragraph(meta, meta_style)], [Paragraph(text, bubble_text_style)]],
+            colWidths=[118 * mm],
+        )
+        bubble_inner.setStyle(
+            TableStyle(
+                [
+                    ('BACKGROUND', (0, 0), (-1, -1), _BUBBLE_COLORS[side]),
+                    ('BOX', (0, 0), (-1, -1), 0.6, colors.white),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+                    ('TOPPADDING', (0, 0), (-1, -1), 7),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('ALIGN', (0, 0), (-1, -1), 'RIGHT' if side == 'right' else 'LEFT'),
+                    ('ROUNDEDCORNERS', [8, 8, 8, 8]),
+                ]
+            )
+        )
+
+        if side == 'right':
+            outer = Table([[ '', bubble_inner ]], colWidths=[42 * mm, 118 * mm])
+        else:
+            outer = Table([[ bubble_inner, '' ]], colWidths=[118 * mm, 42 * mm])
+
+        outer.setStyle(
+            TableStyle(
+                [
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('ALIGN', (0, 0), (-1, -1), 'RIGHT' if side == 'right' else 'LEFT'),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                    ('TOPPADDING', (0, 0), (-1, -1), 0),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        return outer
 
 
 def _ensure_unicode_font() -> str:

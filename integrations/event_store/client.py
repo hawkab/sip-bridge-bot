@@ -1,8 +1,9 @@
-import base64
+import json
 import logging
 import mimetypes
 import os
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -30,11 +31,11 @@ class EventStoreClient:
         if not self.is_sms_enabled():
             return None
         payload = {
-            "timestamp": timestamp,
-            "number": number,
-            "text": base64.b64encode(text.encode("utf-8")).decode("ascii"),
+            'timestamp': timestamp,
+            'number': number,
+            'text': base64_encode(text),
         }
-        result = await self._post_json(self.config.EVENT_STORE_SMS_URL, payload, "sms")
+        result = await self._post_json(self.config.EVENT_STORE_SMS_URL, payload, 'sms')
         return result.view_url
 
     async def save_call(
@@ -46,41 +47,41 @@ class EventStoreClient:
         duration: int,
         recording_path: str | None = None,
         recording_name: str | None = None,
-        transcription: str | None = None,
+        transcription: list[dict[str, Any]] | None = None,
     ) -> CallStoreResult:
         if not self.is_call_enabled():
-            return CallStoreResult(ok=False, error_message="call event store is disabled")
+            return CallStoreResult(ok=False, error_message='call event store is disabled')
 
         if recording_path and os.path.exists(recording_path):
             data = {
-                "type": call_type,
-                "timestamp": timestamp,
-                "number": number,
-                "duration": str(max(0, duration)),
+                'type': call_type,
+                'timestamp': timestamp,
+                'number': number,
+                'duration': str(max(0, duration)),
             }
             if transcription:
-                data["transcription"] = transcription
+                data['transcription_json'] = json.dumps(transcription, ensure_ascii=False)
             mime_type, _ = mimetypes.guess_type(recording_name or recording_path)
-            content_type = mime_type or "application/octet-stream"
-            with open(recording_path, "rb") as source:
+            content_type = mime_type or 'application/octet-stream'
+            with open(recording_path, 'rb') as source:
                 files = {
-                    "recording": (
+                    'recording': (
                         recording_name or os.path.basename(recording_path),
                         source.read(),
                         content_type,
                     )
                 }
-            return await self._post_form(self.config.EVENT_STORE_CALL_URL, data, files, "call")
+            return await self._post_form(self.config.EVENT_STORE_CALL_URL, data, files, 'call')
 
         payload = {
-            "type": call_type,
-            "timestamp": timestamp,
-            "number": number,
-            "duration": max(0, duration),
+            'type': call_type,
+            'timestamp': timestamp,
+            'number': number,
+            'duration': max(0, duration),
         }
         if transcription:
-            payload["transcription"] = transcription
-        return await self._post_json(self.config.EVENT_STORE_CALL_URL, payload, "call")
+            payload['transcription'] = transcription
+        return await self._post_json(self.config.EVENT_STORE_CALL_URL, payload, 'call')
 
     async def _post_json(self, url: str, payload: dict, event_kind: str) -> CallStoreResult:
         try:
@@ -93,7 +94,7 @@ class EventStoreClient:
                 )
             return self._parse_response(response, event_kind)
         except Exception as exc:
-            logger.exception("Failed to save %s event via JSON endpoint %s", event_kind, url)
+            logger.exception('Failed to save %s event via JSON endpoint %s', event_kind, url)
             return CallStoreResult(ok=False, error_message=str(exc) or exc.__class__.__name__)
 
     async def _post_form(self, url: str, data: dict, files: dict, event_kind: str) -> CallStoreResult:
@@ -108,7 +109,7 @@ class EventStoreClient:
                 )
             return self._parse_response(response, event_kind)
         except Exception as exc:
-            logger.exception("Failed to save %s event via multipart endpoint %s", event_kind, url)
+            logger.exception('Failed to save %s event via multipart endpoint %s', event_kind, url)
             return CallStoreResult(ok=False, error_message=str(exc) or exc.__class__.__name__)
 
     def _parse_response(self, response: httpx.Response, event_kind: str) -> CallStoreResult:
@@ -116,21 +117,21 @@ class EventStoreClient:
         if payload is None:
             return CallStoreResult(
                 ok=False,
-                error_message=f"{response.status_code} {response.reason_phrase}".strip(),
+                error_message=f'{response.status_code} {response.reason_phrase}'.strip(),
             )
 
-        view_url = str(payload.get("view_url") or "").strip() or None
-        saved_flag = self._coerce_bool(payload.get("saved"))
+        view_url = str(payload.get('view_url') or '').strip() or None
+        saved_flag = self._coerce_bool(payload.get('saved'))
         if response.is_success and saved_flag:
             if view_url:
                 return CallStoreResult(ok=True, view_url=view_url)
-            logger.error("Event store response for %s does not contain view_url: %s", event_kind, payload)
-            return CallStoreResult(ok=False, error_message="view_url is missing in event store response")
+            logger.error('Event store response for %s does not contain view_url: %s', event_kind, payload)
+            return CallStoreResult(ok=False, error_message='view_url is missing in event store response')
 
-        error_message = str(payload.get("error") or payload.get("message") or "").strip() or None
-        if response.is_success and "saved" in payload:
+        error_message = str(payload.get('error') or payload.get('message') or '').strip() or None
+        if response.is_success and 'saved' in payload:
             logger.warning(
-                "Event store reported unsuccessful save for %s: status=%s payload=%s",
+                'Event store reported unsuccessful save for %s: status=%s payload=%s',
                 event_kind,
                 response.status_code,
                 payload,
@@ -138,10 +139,10 @@ class EventStoreClient:
             return CallStoreResult(ok=False, view_url=view_url, error_message=error_message)
 
         if not error_message:
-            error_message = f"{response.status_code} {response.reason_phrase}".strip()
+            error_message = f'{response.status_code} {response.reason_phrase}'.strip()
 
         logger.error(
-            "Event store returned an error for %s: status=%s payload=%s",
+            'Event store returned an error for %s: status=%s payload=%s',
             event_kind,
             response.status_code,
             payload,
@@ -154,21 +155,27 @@ class EventStoreClient:
             return value
         if value is None:
             return False
-        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+        return str(value).strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
 
     def _try_parse_json(self, response: httpx.Response, event_kind: str) -> dict | None:
         try:
             payload = response.json()
         except Exception:
-            logger.exception("Event store returned non-JSON response for %s: %s", event_kind, response.text)
+            logger.exception('Event store returned non-JSON response for %s: %s', event_kind, response.text)
             return None
         return payload if isinstance(payload, dict) else None
 
     def _build_headers(self, *, json_request: bool) -> dict[str, str]:
         headers = {
-            "Accept": "application/json",
-            "Authentication": self.config.EVENT_STORE_AUTH_TOKEN,
+            'Accept': 'application/json',
+            'Authentication': self.config.EVENT_STORE_AUTH_TOKEN,
         }
         if json_request:
-            headers["Content-Type"] = "application/json"
+            headers['Content-Type'] = 'application/json'
         return headers
+
+
+def base64_encode(text: str) -> str:
+    import base64
+
+    return base64.b64encode(text.encode('utf-8')).decode('ascii')
