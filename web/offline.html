@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#212529">
+  <title>SIP Client — ожидание подключения</title>
+  <style>
+    body{margin:0;background:#f8f9fa;color:#334155;font:16px system-ui,sans-serif;min-height:100vh;display:grid;place-items:center;text-align:center}
+    main{padding:24px;max-width:400px}h1{font-size:22px;margin:24px 0 12px}p{line-height:1.5;color:#64748b}
+    .spinner{width:48px;height:48px;margin:auto;border:5px solid #dbe2ea;border-top-color:#0d6efd;border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @media(prefers-reduced-motion:reduce){.spinner{animation-duration:3s}}
+  </style>
+</head>
+<body>
+<main role="status" aria-live="polite">
+  <div class="spinner" aria-hidden="true"></div>
+  <h1>Ожидание подключения</h1>
+  <p>Не удаётся подключиться к серверу. Страница загрузится автоматически, когда соединение восстановится.</p>
+</main>
+<script>
+(() => {
+  let checking = false;
+  async function reconnect() {
+    if (checking) return;
+    checking = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const url = new URL(location.href);
+      // Retain the access key and original deep link in the address bar.
+      url.searchParams.set('action', 'session');
+      const response = await fetch(url, {cache:'no-store', credentials:'same-origin', signal:controller.signal});
+      if (response.status < 500) location.reload();
+    } catch (_) {
+      // Retry only this read-only probe; never replay a mutation.
+    } finally {
+      clearTimeout(timeout);
+      checking = false;
+    }
+  }
+  window.addEventListener('online', reconnect);
+  document.addEventListener('visibilitychange', () => {if (!document.hidden) reconnect();});
+  setInterval(reconnect, 5000);
+  reconnect();
+})();
+</script>
+</body>
+</html>

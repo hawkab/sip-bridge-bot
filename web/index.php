@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/common.php';
 require_once __DIR__ . '/transcription_settings_store.php';
+require_once __DIR__ . '/event_store.php';
 
 ensure_access_or_404();
 
@@ -126,6 +127,28 @@ if ($action !== '') {
             }
             break;
 
+        case 'delete_events':
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                header('Allow: POST');
+                json_response(['ok' => false, 'message' => 'Требуется POST-запрос.'], 405);
+            }
+            $data = get_json_request_body();
+            if (!is_string($data['csrf_token'] ?? null)
+                || !hash_equals(event_deletion_csrf_token(), $data['csrf_token'])) {
+                json_response(['ok' => false, 'message' => 'Обновите страницу и повторите удаление.'], 403);
+            }
+            if (!is_string($data['kind'] ?? null) || !is_array($data['ids'] ?? null)) {
+                json_response(['ok' => false, 'message' => 'Укажите тип и список записей.'], 400);
+            }
+            try {
+                json_response(['ok' => true] + delete_event_records($data['kind'], $data['ids']));
+            } catch (InvalidArgumentException $error) {
+                json_response(['ok' => false, 'message' => $error->getMessage()], 400);
+            } catch (RuntimeException $error) {
+                json_response(['ok' => false, 'message' => $error->getMessage()], 500);
+            }
+            break;
+
         case 'list_calls':
             $items = read_json_array(CALLS_JSON_PATH);
             $items = filter_by_number($items, (string) ($_GET['number'] ?? ''));
@@ -154,6 +177,7 @@ if ($action !== '') {
                 'ok' => true,
                 'items' => $paginated['items'],
                 'meta' => $paginated['meta'],
+                'csrf_token' => event_deletion_csrf_token(),
             ]);
             break;
 
@@ -181,6 +205,7 @@ if ($action !== '') {
                 'ok' => true,
                 'items' => $paginated['items'],
                 'meta' => $paginated['meta'],
+                'csrf_token' => event_deletion_csrf_token(),
             ]);
             break;
 
@@ -272,7 +297,10 @@ if ($action !== '') {
             }
 
             $path = RECORDINGS_DIR . '/' . $file;
-            if (!is_file($path)) {
+            $referenced = array_filter(read_json_array(CALLS_JSON_PATH), static function (array $item) use ($file): bool {
+                return basename((string) ($item['recording_file'] ?? '')) === $file;
+            });
+            if (!$referenced || !is_file($path)) {
                 not_found();
             }
 
@@ -417,56 +445,14 @@ $appConfig = [
             color: #0f172a;
             line-height: 1.45;
         }
-        .notif-toggle {
-            display: inline-flex;
-            align-items: center;
-            gap: .65rem;
-            border: none;
-            background: transparent;
-            padding: 0;
-            color: #334155;
-        }
-        .notif-toggle:disabled {
-            opacity: .6;
-        }
-        .notif-toggle__label {
-            font-size: .875rem;
-            color: #475569;
-        }
-        .notif-toggle__switch {
-            position: relative;
-            width: 3.25rem;
-            height: 1.95rem;
-            border-radius: 999px;
-            background: #d1d5db;
-            box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .08);
-            transition: background-color .2s ease;
-            flex-shrink: 0;
-        }
-        .notif-toggle__thumb {
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 1.7rem;
-            height: 1.7rem;
-            border-radius: 50%;
-            background: #fff;
-            box-shadow: 0 2px 8px rgba(15, 23, 42, .18);
-            transition: transform .2s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: .9rem;
-        }
-        .notif-toggle.is-on .notif-toggle__switch {
-            background: #34c759;
-        }
-        .notif-toggle.is-on .notif-toggle__thumb {
-            transform: translateX(1.3rem);
-        }
-        .notif-toggle.is-blocked .notif-toggle__switch {
-            background: #f59e0b;
-        }
+        .connection-screen { position: fixed; inset: 0; z-index: 9999; display: grid; place-content: center; text-align: center; padding: 24px; background: #f8f9fa; color: #212529; font: 16px/1.5 system-ui, sans-serif; }
+        .connection-screen[hidden] { display: none; }
+        .connection-spinner { width: 44px; height: 44px; border: 4px solid #dbe3ee; border-top-color: #0d6efd; border-radius: 50%; margin: 0 auto 20px; animation: connection-spin 1s linear infinite; }
+        @keyframes connection-spin { to { transform: rotate(360deg); } }
+        .selection-cell { width: 44px; text-align: center; }
+        .selection-cell input { width: 18px; height: 18px; cursor: pointer; }
+        #deleteDialog { border: 0; border-radius: 12px; padding: 24px; max-width: min(480px, calc(100% - 32px)); }
+        #deleteDialog::backdrop { background: #0008; }
         .pagination-wrap {
             gap: .75rem;
         }
@@ -493,9 +479,15 @@ $appConfig = [
     </style>
 </head>
 <body>
+<div id="connectionScreen" class="connection-screen" role="status" aria-live="polite">
+    <div class="connection-spinner" aria-hidden="true"></div>
+    <strong id="connectionTitle">Загрузка…</strong>
+    <p id="connectionMessage">Подключаемся к серверу</p>
+</div>
 <div id="app"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="notifications.js?v=20260920-02"></script>
 <script>
 (() => {
     const APP_CONFIG = <?= json_encode($appConfig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
@@ -503,9 +495,13 @@ $appConfig = [
     const state = {
         authenticated: <?= $isAuthenticated ? 'true' : 'false' ?>,
         activeMenu: 'calls',
+        deleting: false,
+        listEpoch: 0,
+        deletionCsrf: '',
         settings: { backend: 'gigaam', csrfToken: '', loading: true, saving: false, error: '', message: '' },
         calls: {
             items: [],
+            selected: new Set(),
             search: '',
             sortBy: 'timestamp',
             sortDirection: 'desc',
@@ -515,6 +511,7 @@ $appConfig = [
         },
         sms: {
             items: [],
+            selected: new Set(),
             search: '',
             sortBy: 'timestamp',
             sortDirection: 'desc',
@@ -628,8 +625,46 @@ $appConfig = [
         return data;
     }
 
+    let connectionLost = false;
+    let connectionProbeRunning = false;
+    function showConnectionWait() {
+        connectionLost = true;
+        document.getElementById('connectionTitle').textContent = 'Ожидание подключения';
+        document.getElementById('connectionMessage').textContent = 'Страница загрузится автоматически, когда соединение восстановится.';
+        document.getElementById('connectionScreen').hidden = false;
+    }
+    async function connectionProbe() {
+        if (!connectionLost || connectionProbeRunning) return;
+        connectionProbeRunning = true;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        try {
+            const response = await fetch(buildActionUrl('session'), { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
+            if (response.status < 500) window.location.reload();
+        } catch (_) {
+        } finally {
+            clearTimeout(timer);
+            connectionProbeRunning = false;
+        }
+    }
+    async function fetchWithConnectionWait(url, options) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 10000);
+        try {
+            return await fetch(url, { ...options, signal: controller.signal });
+        } catch (error) {
+            showConnectionWait();
+            throw error;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+    window.addEventListener('offline', showConnectionWait);
+    window.addEventListener('online', connectionProbe);
+    setInterval(connectionProbe, 5000);
+
     async function apiGet(action, extra = {}) {
-        const response = await fetch(buildActionUrl(action, extra), {
+        const response = await fetchWithConnectionWait(buildActionUrl(action, extra), {
             credentials: 'same-origin',
             cache: 'no-store',
         });
@@ -637,7 +672,7 @@ $appConfig = [
     }
 
     async function apiPost(action, payload = {}) {
-        const response = await fetch(buildActionUrl(action), {
+        const response = await fetchWithConnectionWait(buildActionUrl(action), {
             method: 'POST',
             credentials: 'same-origin',
             cache: 'no-store',
@@ -678,8 +713,12 @@ $appConfig = [
         `;
 
         const toastElement = document.getElementById(toastId);
-        const toast = new bootstrap.Toast(toastElement, { delay: 2000 });
-        toast.show();
+        if (window.bootstrap) {
+            new bootstrap.Toast(toastElement, { delay: 3500 }).show();
+        } else {
+            toastElement.classList.add('show');
+            setTimeout(() => toastElement.remove(), 3500);
+        }
     }
 
     function cleanupModalArtifacts() {
@@ -851,11 +890,80 @@ $appConfig = [
         }
     }
 
+    function renderRowCheckbox(target, item) {
+        return `<input type="checkbox" data-select-target="${target}" data-select-id="${escapeHtml(item.id || '')}"
+            aria-label="Выбрать ${target === 'calls' ? 'звонок' : 'СМС'} ${escapeHtml(item.number || '')} ${escapeHtml(item.displayTimestamp || item.timestamp || '')}"
+            ${state[target].selected.has(item.id) ? 'checked' : ''} ${state.deleting ? 'disabled' : ''}>`;
+    }
+
+    function updateSelectionControls() {
+        for (const target of ['calls', 'sms']) {
+            const source = state[target];
+            const all = app.querySelector(`[data-select-all="${target}"]`);
+            if (all) {
+                all.checked = source.items.length > 0 && source.selected.size === source.items.length;
+                all.indeterminate = source.selected.size > 0 && !all.checked;
+                all.disabled = state.deleting || !source.items.length;
+            }
+            const button = app.querySelector(`[data-delete-selected="${target}"]`);
+            if (button) {
+                button.disabled = state.deleting || source.selected.size === 0;
+                button.textContent = state.deleting ? 'Удаление…' : `Удалить выбранные (${source.selected.size})`;
+            }
+        }
+    }
+
+    function confirmDeletion(kind, count) {
+        const dialog = document.createElement('dialog');
+        dialog.id = 'deleteDialog';
+        dialog.setAttribute('aria-labelledby', 'deleteTitle');
+        dialog.innerHTML = `<h2 id="deleteTitle" class="h5">Удалить выбранные ${kind === 'calls' ? 'звонки' : 'СМС'}?</h2>
+            <p>Количество записей: ${count}. ${kind === 'calls' ? 'Их аудиозаписи также будут удалены. ' : ''}Отменить удаление нельзя.</p>
+            <form method="dialog" class="d-flex gap-2 justify-content-end">
+                <button value="cancel" class="btn btn-outline-secondary" autofocus>Отмена</button>
+                <button value="delete" class="btn btn-danger">Удалить</button>
+            </form>`;
+        document.body.appendChild(dialog);
+        return new Promise((resolve) => {
+            dialog.addEventListener('close', () => {
+                const confirmed = dialog.returnValue === 'delete';
+                dialog.remove();
+                resolve(confirmed);
+            }, { once: true });
+            dialog.showModal();
+        });
+    }
+
+    async function deleteSelected(kind) {
+        if (state.deleting) return;
+        const ids = [...state[kind].selected];
+        if (!ids.length) return;
+        state.deleting = true;
+        state.listEpoch++;
+        stopPolling();
+        refreshMainArea();
+        try {
+            if (!await confirmDeletion(kind, ids.length)) return;
+            const response = await apiPost('delete_events', { kind, ids, csrf_token: state.deletionCsrf });
+            state[kind].selected.clear();
+            await loadTarget(kind);
+            await bootstrapKnownIds();
+            showToast(`Удалено записей: ${response.deleted_ids.length}.` + (response.recording_cleanup_failed ? ' Не удалось удалить часть аудиофайлов с диска.' : ''), !!response.recording_cleanup_failed);
+        } catch (error) {
+            showToast(error.message || 'Не удалось удалить записи', true);
+        } finally {
+            state.deleting = false;
+            refreshMainArea();
+            if (state.authenticated) startPolling();
+        }
+    }
+
     function renderCallsTable() {
         const sortBy = state.calls.sortBy;
         const sortDirection = state.calls.sortDirection;
         const rows = state.calls.items.map((item) => `
             <tr class="${item.isRecent ? 'recent-row' : ''}">
+                <td class="selection-cell">${renderRowCheckbox('calls', item)}</td>
                 <td><span class="phone-link" data-detail-view="call" data-detail-id="${escapeHtml(item.id || '')}">${escapeHtml(item.displayTimestamp || item.timestamp || '')}</span></td>
                 <td>${escapeHtml(item.type || '') === 'входящий' ? '<img class="red" src="icons/income_call.png" title="Входящий"x/>' : '<img class="green" src="icons/outcome_call.png" title="Исходящий"/>'}</td>
                 <td><span class="phone-link" data-phone="${escapeHtml(item.number || '')}">${escapeHtml(item.number || '')}</span></td>
@@ -870,6 +978,7 @@ $appConfig = [
                         <table class="table table-hover align-middle mb-0">
                             <thead class="table-light">
                                 <tr>
+                                    <th class="selection-cell"><input type="checkbox" data-select-all="calls" aria-label="Выбрать все записи на странице" ${state.deleting ? 'disabled' : ''}></th>
                                     <th>
                                         <button type="button" class="header-sort sortable-header" data-sort-target="calls" data-sort-by="timestamp">
                                             Дата <span class="sort-indicator">${getSortIndicator(sortBy, sortDirection, 'timestamp')}</span>
@@ -900,6 +1009,7 @@ $appConfig = [
         const sortDirection = state.sms.sortDirection;
         const rows = state.sms.items.map((item) => `
             <tr class="${item.isRecent ? 'recent-row' : ''}">
+                <td class="selection-cell">${renderRowCheckbox('sms', item)}</td>
                 <td><span class="phone-link" data-detail-view="sms" data-detail-id="${escapeHtml(item.id || '')}">${escapeHtml(item.displayTimestamp || item.timestamp || '')}</span></td>
                 <td><span class="phone-link" data-phone="${escapeHtml(item.number || '')}">${escapeHtml(item.number || '')}</span></td>
                 <td>${escapeHtml(item.preview || '')}</td>
@@ -913,6 +1023,7 @@ $appConfig = [
                         <table class="table table-hover align-middle mb-0">
                             <thead class="table-light">
                                 <tr>
+                                    <th class="selection-cell"><input type="checkbox" data-select-all="sms" aria-label="Выбрать все записи на странице" ${state.deleting ? 'disabled' : ''}></th>
                                     <th>
                                         <button type="button" class="header-sort sortable-header" data-sort-target="sms" data-sort-by="timestamp">
                                             Дата <span class="sort-indicator">${getSortIndicator(sortBy, sortDirection, 'timestamp')}</span>
@@ -927,7 +1038,7 @@ $appConfig = [
                                 </tr>
                             </thead>
                             <tbody>
-                                ${rows || '<tr><td colspan="3" class="text-center text-muted py-4">Нет данных</td></tr>'}
+                                ${rows || '<tr><td colspan="4" class="text-center text-muted py-4">Нет данных</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -1009,6 +1120,7 @@ $appConfig = [
                 <input id="${target}Search" class="form-control" style="max-width: 320px;" placeholder="Поиск по номеру" value="${escapeHtml(source.search)}">
                 <button id="${target}SearchBtn" class="btn btn-outline-secondary" type="button">Найти</button>
                 <button id="${target}ClearBtn" class="btn btn-outline-secondary" type="button">Сбросить</button>
+                <button data-delete-selected="${target}" class="btn btn-outline-danger" type="button" disabled>Удалить выбранные (0)</button>
                 <button id="${target}ReloadBtn" class="btn btn-outline-secondary ms-auto" type="button">Обновить</button>
             </div>
         `;
@@ -1042,10 +1154,7 @@ $appConfig = [
             contentElement.innerHTML = renderMainContent();
         }
 
-        const notificationBtn = document.getElementById('notificationBtn');
-        if (notificationBtn) {
-            updateNotificationButton(notificationBtn).catch((error) => console.error(error));
-        }
+        updateSelectionControls();
     }
 
     function renderShell() {
@@ -1066,7 +1175,7 @@ $appConfig = [
                     <main class="col p-3 p-md-4">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h1 id="pageTitle" class="h4 m-0">${menuTitle()}</h1>
-                            <button id="notificationBtn" class="notif-toggle" type="button" aria-label="Уведомления"></button>
+
                         </div>
 
                         <div id="toolbarContainer">${renderToolbar(state.activeMenu)}</div>
@@ -1078,10 +1187,7 @@ $appConfig = [
         `;
 
         ensureDomEventBindings();
-        const notificationBtn = document.getElementById('notificationBtn');
-        if (notificationBtn) {
-            updateNotificationButton(notificationBtn).catch((error) => console.error(error));
-        }
+        updateSelectionControls();
     }
 
     function ensureDomEventBindings() {
@@ -1090,6 +1196,12 @@ $appConfig = [
         }
 
         app.addEventListener('click', async (event) => {
+            if (state.deleting) return;
+            const deleteButton = event.target.closest('[data-delete-selected]');
+            if (deleteButton) {
+                await deleteSelected(deleteButton.dataset.deleteSelected);
+                return;
+            }
             if (event.target.closest('#saveTranscriptionSettings')) {
                 const selected = document.getElementById('transcriptionBackend');
                 if (!selected || state.settings.saving) return;
@@ -1218,6 +1330,10 @@ $appConfig = [
                     await apiPost('logout');
                 } finally {
                     state.authenticated = false;
+                    state.calls.selected.clear();
+                    state.sms.selected.clear();
+                    state.deletionCsrf = '';
+                    state.listEpoch++;
                     stopPolling();
                     cleanupModalArtifacts();
                     renderLogin();
@@ -1225,18 +1341,24 @@ $appConfig = [
                 return;
             }
 
-            const notificationButton = event.target.closest('#notificationBtn');
-            if (notificationButton) {
-                try {
-                    await enablePush();
-                    await updateNotificationButton(notificationButton);
-                } catch (error) {
-                    showToast(error.message || 'Не удалось включить уведомления', true);
-                }
-            }
         });
 
         app.addEventListener('change', async (event) => {
+            if (state.deleting) return;
+            const checkbox = event.target.closest('[data-select-target], [data-select-all]');
+            if (checkbox) {
+                const target = checkbox.dataset.selectTarget || checkbox.dataset.selectAll;
+                if (checkbox.dataset.selectAll) {
+                    state[target].selected = new Set(checkbox.checked ? state[target].items.map(item => item.id) : []);
+                    app.querySelectorAll(`[data-select-target="${target}"]`).forEach(input => { input.checked = checkbox.checked; });
+                } else if (checkbox.checked) {
+                    state[target].selected.add(checkbox.dataset.selectId);
+                } else {
+                    state[target].selected.delete(checkbox.dataset.selectId);
+                }
+                updateSelectionControls();
+                return;
+            }
             const pageSizeElement = event.target.closest('#callsPageSize, #smsPageSize');
             if (!pageSizeElement) {
                 return;
@@ -1250,6 +1372,7 @@ $appConfig = [
         });
 
         app.addEventListener('keydown', async (event) => {
+            if (state.deleting) return;
             const searchInput = event.target.closest('#callsSearch, #smsSearch');
             if (!searchInput || event.key !== 'Enter') {
                 return;
@@ -1281,6 +1404,9 @@ $appConfig = [
         const meta = response.meta || null;
         const hasChanged = !isSamePayload(state[target].items, items) || !isSamePayload(state[target].meta, meta);
 
+        state.deletionCsrf = response.csrf_token || state.deletionCsrf;
+        state[target].selected = new Set(items.map(item => item.id).filter(id => state[target].selected.has(id)));
+        if (meta) state[target].page = meta.page;
         state[target].items = items;
         state[target].meta = meta;
 
@@ -1288,6 +1414,7 @@ $appConfig = [
     }
 
     async function loadCalls() {
+        const epoch = state.listEpoch;
         const response = await apiGet('list_calls', {
             number: state.calls.search,
             sortBy: state.calls.sortBy,
@@ -1295,10 +1422,12 @@ $appConfig = [
             page: state.calls.page,
             pageSize: state.calls.pageSize,
         });
+        if (epoch !== state.listEpoch) return false;
         return applyListState('calls', response);
     }
 
     async function loadSms() {
+        const epoch = state.listEpoch;
         const response = await apiGet('list_sms', {
             number: state.sms.search,
             sortBy: state.sms.sortBy,
@@ -1306,6 +1435,7 @@ $appConfig = [
             page: state.sms.page,
             pageSize: state.sms.pageSize,
         });
+        if (epoch !== state.listEpoch) return false;
         return applyListState('sms', response);
     }
 
@@ -1422,7 +1552,7 @@ async function handleDeepLinkUrl(targetUrl, replaceState = true) {
 }
 
 async function showNotification(title, body, url = APP_CONFIG.appUrl) {
-    if (Notification.permission !== 'granted') {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
         return;
     }
 
@@ -1456,7 +1586,7 @@ async function bootstrapKnownIds() {
 }
 
 async function pollUpdates() {
-    if (state.pollInFlight) {
+    if (state.pollInFlight || state.deleting) {
         return;
     }
 
@@ -1464,6 +1594,7 @@ async function pollUpdates() {
 
     try {
         const snapshot = await apiGet('latest_snapshot');
+        if (state.deleting) return;
         const latestCalls = snapshot.calls || [];
         const latestSms = snapshot.sms || [];
 
@@ -1546,7 +1677,7 @@ async function pollUpdates() {
             return null;
         }
 
-        const registration = await navigator.serviceWorker.register('sw.js?v=20260920-01', { scope: './' });
+        const registration = await navigator.serviceWorker.register('sw.js?v=20260920-02', { scope: './' });
         await navigator.serviceWorker.ready;
         await registration.update().catch(() => null);
         await syncServiceWorkerConfig(registration);
@@ -1581,57 +1712,10 @@ async function pollUpdates() {
         return registration;
     }
 
-    async function updateNotificationButton(button) {
-        if (!button) {
-            return;
-        }
-
-        const setToggleState = (stateName, label) => {
-            button.classList.remove('is-on', 'is-off', 'is-blocked');
-            button.classList.add(stateName);
-            button.innerHTML = `
-                <span class="notif-toggle__label">${escapeHtml(label)}</span>
-                <span class="notif-toggle__switch" aria-hidden="true">
-                    <span class="notif-toggle__thumb"></span>
-                </span>
-            `;
-        };
-
-        if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
-            setToggleState('is-blocked', 'Недоступно');
-            button.disabled = true;
-            return;
-        }
-
-        button.disabled = false;
-
-        const registration = await navigator.serviceWorker.ready;
-        await syncServiceWorkerConfig(registration);
-
-        const subscription = await registration.pushManager.getSubscription();
-        if (subscription) {
-            setToggleState('is-on', 'Уведомления');
-            return;
-        }
-
-        if (Notification.permission === 'denied') {
-            setToggleState('is-blocked', 'Заблокировано');
-            button.disabled = true;
-            return;
-        }
-
-        setToggleState('is-off', 'Уведомления');
-    }
-
     async function enablePush() {
-        if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
-            throw new Error('Браузер не поддерживает Web Push.');
-        }
-
-        const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-            throw new Error('Уведомления не разрешены.');
-        }
+        if (!('serviceWorker' in navigator) || !('PushManager' in window) || !APP_CONFIG.vapidPublicKey) return;
+        if (Notification.permission !== 'granted') return;
+        await registerServiceWorker();
 
         const registration = await navigator.serviceWorker.ready;
         await syncServiceWorkerConfig(registration);
@@ -1655,11 +1739,10 @@ async function pollUpdates() {
         });
 
         await parseResponse(response);
-        showToast('Уведомления включены');
+
     }
 
     async function initializeApp() {
-        await registerServiceWorker();
         await loadCalls();
         await loadSms();
         await bootstrapKnownIds();
@@ -1719,7 +1802,8 @@ async function pollUpdates() {
     });
 
     async function bootstrapApp() {
-        await registerServiceWorker();
+        registerServiceWorker().catch(error => console.error('Service worker:', error));
+        if (window.SipNotifications) window.SipNotifications.start(enablePush);
 
         if (!state.authenticated) {
             try {
@@ -1737,7 +1821,12 @@ async function pollUpdates() {
         }
     }
 
-    bootstrapApp();
+    bootstrapApp().then(() => {
+        if (!connectionLost) document.getElementById('connectionScreen').hidden = true;
+    }).catch(error => {
+        console.error(error);
+        showConnectionWait();
+    });
 })();
 </script>
 </body>

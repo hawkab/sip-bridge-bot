@@ -63,44 +63,60 @@ function postOpenTargetMessage(client, url, notificationData) {
   }
 }
 
-const CACHE_NAME = 'sip-pwa-v4';
-const ASSETS = [
-  './manifest.webmanifest',
-  '/icons/192-any.png',
-  './icons/512-any.png',
-  './icons/192-mask.png',
-  './icons/512-mask.png'
-];
+const CACHE_NAME = 'sip-pwa-v5';
+const OFFLINE_URL = new URL('./offline.html', self.location.href).href;
+const ASSETS = ['./icons/192-any.png', './icons/512-any.png', './icons/192-mask.png', './icons/512-mask.png'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).catch(() => Promise.resolve())
-  );
-  self.skipWaiting();
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    // Install only when the standalone fallback is available. Optional icons
+    // must not prevent offline navigation from working.
+    await cache.add(new Request(OFFLINE_URL, { cache: 'reload' }));
+    await Promise.allSettled(ASSETS.map(asset => cache.add(asset)));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) => Promise.all(
-      keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
-    ))
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(key => key.startsWith('sip-pwa-') && key !== CACHE_NAME).map(key => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
-self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') {
-    return;
+async function navigateWithOfflineFallback(request) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(request, { signal: controller.signal });
+    if (response.status >= 500) throw new Error('Server unavailable');
+    return response;
+  } catch (error) {
+    const cache = await caches.open(CACHE_NAME);
+    const offline = await cache.match(OFFLINE_URL);
+    if (offline) return offline;
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  const url = new URL(event.request.url);
-  if (event.request.mode === 'navigate' || url.searchParams.has('action')
-      || url.pathname.endsWith('/transcription_settings.php')) {
-    return;
-  }
+}
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
-  );
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  const appDirectory = new URL('./', self.location.href).pathname;
+  if (url.origin !== self.location.origin || url.searchParams.has('action')) return;
+  if (event.request.mode === 'navigate' && (url.pathname === appDirectory || url.pathname === appDirectory + 'index.php')) {
+    event.respondWith(navigateWithOfflineFallback(event.request));
+    return;
+  }
+  // Never cache private pages, API responses or recordings.
+  const assets = ASSETS.map(asset => new URL(asset, self.location.href).href);
+  if (assets.includes(url.href)) {
+    event.respondWith(caches.open(CACHE_NAME).then(cache => cache.match(event.request)).then(cached => cached || fetch(event.request)));
+  }
 });
 
 self.addEventListener('push', (event) => {
