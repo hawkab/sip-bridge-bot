@@ -66,8 +66,7 @@ if ($action === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = (string) ($data['password'] ?? '');
 
     if (hash_equals(APP_LOGIN, $login) && password_verify($password, APP_PASSWORD_HASH)) {
-        start_app_session();
-        $_SESSION['user_authenticated'] = true;
+        complete_app_login();
         json_response([
             'ok' => true,
             'authenticated' => true,
