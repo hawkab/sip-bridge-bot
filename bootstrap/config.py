@@ -1,6 +1,7 @@
 import os, sys
 from pathlib import Path
 import logging
+from urllib.parse import urljoin
 logger = logging.getLogger(__name__)
 
 def load_env(path: str):
@@ -95,6 +96,18 @@ class Config:
         self.EVENT_STORE_TIMEOUT_SECONDS = float(os.environ.get("EVENT_STORE_TIMEOUT_SECONDS", "20"))
 
         self.CALL_TRANSCRIBE_ENABLED = os.environ.get("CALL_TRANSCRIBE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+        self.CALL_TRANSCRIBE_BACKEND = os.environ.get("CALL_TRANSCRIBE_BACKEND", "gigaam").strip().lower()
+        if self.CALL_TRANSCRIBE_BACKEND not in {"gigaam", "whisper"}:
+            raise ValueError("CALL_TRANSCRIBE_BACKEND must be gigaam or whisper")
+        self.CALL_TRANSCRIBE_GIGAAM_MODEL_PATH = os.environ.get("CALL_TRANSCRIBE_GIGAAM_MODEL_PATH", "").strip()
+        self.CALL_TRANSCRIBE_SETTINGS_URL = os.environ.get(
+            "CALL_TRANSCRIBE_SETTINGS_URL",
+            urljoin(self.EVENT_STORE_CALL_URL, "transcription_settings.php") if self.EVENT_STORE_CALL_URL else "",
+        ).strip()
+        self.CALL_TRANSCRIBE_SETTINGS_TIMEOUT_SECONDS = float(os.environ.get("CALL_TRANSCRIBE_SETTINGS_TIMEOUT_SECONDS", "3"))
+        self.CALL_TRANSCRIBE_CPU_THREADS = int(os.environ.get("CALL_TRANSCRIBE_CPU_THREADS", "2"))
+        if self.CALL_TRANSCRIBE_CPU_THREADS < 1:
+            raise ValueError("CALL_TRANSCRIBE_CPU_THREADS must be positive")
         self.CALL_TRANSCRIBE_MODEL = os.environ.get("CALL_TRANSCRIBE_MODEL", "small").strip() or "small"
         self.CALL_TRANSCRIBE_DEVICE = os.environ.get("CALL_TRANSCRIBE_DEVICE", "cpu").strip() or "cpu"
         self.CALL_TRANSCRIBE_COMPUTE_TYPE = os.environ.get("CALL_TRANSCRIBE_COMPUTE_TYPE", "int8").strip() or "int8"
@@ -103,7 +116,7 @@ class Config:
         self.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS = float(os.environ.get("CALL_TRANSCRIBE_SPLIT_GAP_SECONDS", "0.8"))
         self.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS = float(os.environ.get("CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS", "0.35"))
         self.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS = float(os.environ.get("CALL_TRANSCRIBE_MAX_PHRASE_SECONDS", "0"))
-        self.CALL_TRANSCRIBE_VAD_FILTER = os.environ.get("CALL_TRANSCRIBE_VAD_FILTER", "0").strip().lower() not in {"0", "false", "no", "off"}
+        self.CALL_TRANSCRIBE_VAD_FILTER = os.environ.get("CALL_TRANSCRIBE_VAD_FILTER", "1").strip().lower() not in {"0", "false", "no", "off"}
         self.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS = int(os.environ.get("CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS", "500"))
         self.CALL_TRANSCRIBE_LEFT_LABEL = os.environ.get("CALL_TRANSCRIBE_LEFT_LABEL", "SPEAKER_1").strip() or "SPEAKER_1"
         self.CALL_TRANSCRIBE_RIGHT_LABEL = os.environ.get("CALL_TRANSCRIBE_RIGHT_LABEL", "SPEAKER_2").strip() or "SPEAKER_2"

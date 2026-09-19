@@ -6,3 +6,8 @@ __pycache__/.pyc
 .iml
 proxy.txt
 failed_telegram.queue
+__pycache__/
+*.py[cod]
+web/common.php
+web/vendor/
+web/sip-private-data/

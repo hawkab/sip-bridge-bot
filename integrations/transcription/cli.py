@@ -15,6 +15,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument('input_wav', help='Path to input stereo WAV file.')
     parser.add_argument('-o', '--output', default=None, help='Optional output JSON file. If omitted, JSON is printed to stdout.')
+    parser.add_argument('--backend', choices=['gigaam', 'whisper'], default='gigaam', help='ASR backend. Default: gigaam')
+    parser.add_argument('--gigaam-model-path', default='', help='Optional local GigaAM ONNX model directory')
+    parser.add_argument('--cpu-threads', type=int, default=2, help='CPU inference threads. Default: 2')
     parser.add_argument('--model', default='small', help='Whisper model size or local CTranslate2 model. Default: small')
     parser.add_argument('--device', default='cpu', help='Inference device. Default: cpu')
     parser.add_argument('--compute-type', default='int8', help='Compute type. Default: int8')
@@ -28,12 +31,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--vad-filter', action=argparse.BooleanOptionalAction, default=True, help='Enable or disable VAD filter. Default: enabled')
     parser.add_argument('--vad-min-silence-ms', type=int, default=500, help='Minimum silence duration for VAD. Default: 500')
     parser.add_argument('--indent', type=int, default=2, help='JSON indentation. Default: 2')
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.cpu_threads < 1:
+        parser.error('--cpu-threads must be positive')
+    return args
 
 
 def build_cli_config(args: argparse.Namespace) -> SimpleNamespace:
     return SimpleNamespace(
         CALL_TRANSCRIBE_ENABLED=True,
+        CALL_TRANSCRIBE_BACKEND=args.backend,
+        CALL_TRANSCRIBE_GIGAAM_MODEL_PATH=args.gigaam_model_path,
+        CALL_TRANSCRIBE_CPU_THREADS=args.cpu_threads,
         CALL_TRANSCRIBE_MODEL=args.model,
         CALL_TRANSCRIBE_DEVICE=args.device,
         CALL_TRANSCRIBE_COMPUTE_TYPE=args.compute_type,

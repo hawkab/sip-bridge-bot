@@ -7,12 +7,16 @@ import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+import wave
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from faster_whisper import WhisperModel
+from faster_whisper.audio import decode_audio
+from faster_whisper.vad import VadOptions, get_speech_timestamps
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +35,14 @@ class ChannelResult:
 class StereoCallTranscriber:
     def __init__(self, config):
         self.config = config
-        self._model: WhisperModel | None = None
+        self._model: Any | None = None
         self._model_lock = Lock()
         self._transcribe_lock = asyncio.Lock()
+        self._backend = config.CALL_TRANSCRIBE_BACKEND
+        self._settings_client = None
+        if getattr(config, 'CALL_TRANSCRIBE_SETTINGS_URL', ''):
+            from integrations.transcription.settings import TranscriptionSettingsClient
+            self._settings_client = TranscriptionSettingsClient(config)
 
     def is_enabled(self) -> bool:
         return bool(self.config.CALL_TRANSCRIBE_ENABLED)
@@ -49,6 +58,13 @@ class StereoCallTranscriber:
 
         async with self._transcribe_lock:
             try:
+                if self._settings_client is not None:
+                    backend = await self._settings_client.get_backend()
+                    if backend != self._backend:
+                        logger.info('Switching transcription backend: %s -> %s', self._backend, backend)
+                        # Only one model is kept in RAM; a running call always finishes first.
+                        self._model = None
+                        self._backend = backend
                 return await asyncio.to_thread(self._transcribe_blocking, path)
             except Exception:
                 logger.exception('Failed to transcribe recording: %s', path)
@@ -59,6 +75,14 @@ class StereoCallTranscriber:
         return json.dumps(payload, ensure_ascii=False, indent=indent)
 
     def _transcribe_blocking(self, wav_path: Path) -> dict[str, Any]:
+        with wave.open(str(wav_path)) as wav:
+            if wav.getnchannels() != 2:
+                raise ValueError('Call transcription requires a stereo PCM WAV recording')
+        backend = self._backend
+        if backend == 'gigaam':
+            return self._transcribe_gigaam(wav_path)
+        if backend != 'whisper':
+            raise ValueError(f'Unsupported transcription backend: {backend}')
         ensure_ffmpeg()
 
         with tempfile.TemporaryDirectory(prefix='stereo_transcribe_') as tmp_dir_str:
@@ -109,11 +133,46 @@ class StereoCallTranscriber:
                 right=right_result,
             )
 
-    def _get_model(self) -> WhisperModel:
+    def _transcribe_gigaam(self, wav_path: Path) -> dict[str, Any]:
+        from integrations.transcription import gigaam
+
+        audio_channels = gigaam.decode_stereo(wav_path)
+        results = []
+        for audio, name, label in zip(
+            audio_channels, ['left', 'right'],
+            [self.config.CALL_TRANSCRIBE_LEFT_LABEL, self.config.CALL_TRANSCRIBE_RIGHT_LABEL],
+        ):
+            results.append(gigaam.transcribe_channel(
+                audio, self._get_model, speaker=label, channel_name=name,
+                vad_min_silence_ms=self.config.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS,
+                split_gap_seconds=self.config.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS,
+                punctuation_gap_seconds=self.config.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS,
+                max_phrase_seconds=self.config.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS,
+            ))
+        payload = build_output_json(
+            input_wav=wav_path, model_name=gigaam.MODEL_NAME,
+            device='cpu', compute_type='int8', language='ru',
+            vad_filter=True, vad_min_silence_ms=self.config.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS,
+            merge_gap=self.config.CALL_TRANSCRIBE_MERGE_GAP,
+            left=results[0], right=results[1],
+        )
+        payload['backend'] = 'gigaam'
+        return payload
+
+    def _get_model(self) -> Any:
         if self._model is not None:
             return self._model
         with self._model_lock:
             if self._model is None:
+                if self._backend == 'gigaam':
+                    from integrations.transcription import gigaam
+
+                    logger.info('Loading GigaAM v3 e2e RNN-T int8 for call transcription')
+                    self._model = gigaam.load_model(
+                        self.config.CALL_TRANSCRIBE_GIGAAM_MODEL_PATH,
+                        self.config.CALL_TRANSCRIBE_CPU_THREADS,
+                    )
+                    return self._model
                 logger.info(
                     'Loading Whisper model for call transcription: model=%s device=%s compute_type=%s',
                     self.config.CALL_TRANSCRIBE_MODEL,
@@ -124,6 +183,7 @@ class StereoCallTranscriber:
                     self.config.CALL_TRANSCRIBE_MODEL,
                     device=self.config.CALL_TRANSCRIBE_DEVICE,
                     compute_type=self.config.CALL_TRANSCRIBE_COMPUTE_TYPE,
+                    cpu_threads=self.config.CALL_TRANSCRIBE_CPU_THREADS,
                 )
         return self._model
 
@@ -142,8 +202,8 @@ def run_ffmpeg_extract_channel(input_path: Path, output_path: Path, channel_inde
         '-y',
         '-i',
         str(input_path),
-        '-map_channel',
-        f'0.0.{channel_index}',
+        '-af',
+        f'pan=mono|c0=c{channel_index}',
         '-ac',
         '1',
         str(output_path),
@@ -181,30 +241,40 @@ def transcribe_channel(
 ) -> ChannelResult:
     kwargs: dict[str, Any] = {
         'beam_size': beam_size,
-        'vad_filter': vad_filter,
+        # Decode separate VAD intervals so repeated IVR prompts keep their place.
+        'vad_filter': False,
         'language': language,
         'word_timestamps': True,
         # Telephony audio with repeated IVR prompts is a bad fit for carrying decoder text
         # from the previous window into the next one. When the same phrase is spoken again
         # after a pause, Whisper may "remember" it already saw that text and suppress a repeat.
         'condition_on_previous_text': False,
-        # For narrow-band call audio, conservative Whisper thresholds can drop short but valid
-        # speech fragments as "no speech" or over-compressed output. Disabling these thresholds
-        # is safer here because we already work on isolated mono channels and optionally apply VAD.
-        'compression_ratio_threshold': None,
-        'log_prob_threshold': None,
-        'no_speech_threshold': None,
+        'compression_ratio_threshold': 2.4,
+        'log_prob_threshold': -1.0,
+        'no_speech_threshold': .6,
+        'hallucination_silence_threshold': 2.0,
         # Keep decoding deterministic for call records.
         'temperature': 0.0,
     }
 
-    if vad_filter:
-        kwargs['vad_parameters'] = {
-            'min_silence_duration_ms': vad_min_silence_ms,
-        }
-
-    segments_iter, info = model.transcribe(str(wav_path), **kwargs)
-    segments = list(segments_iter)
+    audio = decode_audio(str(wav_path))
+    intervals = []
+    if audio.size and np.any(audio):
+        intervals = get_speech_timestamps(audio, VadOptions(
+            min_silence_duration_ms=vad_min_silence_ms,
+            max_speech_duration_s=20, speech_pad_ms=300,
+        )) if vad_filter else [{'start': 0, 'end': len(audio)}]
+    segments = []
+    info = None
+    for interval in intervals:
+        offset = interval['start'] / 16000
+        segments_iter, info = model.transcribe(audio[interval['start']:interval['end']], **kwargs)
+        for segment in segments_iter:
+            segments.append(replace(
+                segment, start=segment.start + offset, end=segment.end + offset,
+                words=[replace(word, start=word.start + offset, end=word.end + offset)
+                       for word in segment.words] if segment.words is not None else None,
+            ))
 
     rows: list[dict[str, Any]] = []
     for seg in segments:
@@ -466,6 +536,7 @@ def build_output_json(
     return {
         'input_file': str(input_wav),
         'created_at_utc': datetime.now(timezone.utc).isoformat(),
+        'backend': 'whisper',
         'model': model_name,
         'device': device,
         'compute_type': compute_type,
