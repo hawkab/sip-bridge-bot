@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
@@ -39,6 +40,10 @@ class StereoCallTranscriber:
         self._model_lock = Lock()
         self._transcribe_lock = asyncio.Lock()
         self._backend = config.CALL_TRANSCRIBE_BACKEND
+        self._channel_workers = getattr(config, 'CALL_TRANSCRIBE_CHANNEL_WORKERS', 1)
+        self._gigaam_channel_workers = getattr(config, 'CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS', self._channel_workers)
+        if self._channel_workers not in (1, 2) or self._gigaam_channel_workers not in (1, 2):
+            raise ValueError('Transcription channel worker counts must be 1 or 2')
         self._settings_client = None
         if getattr(config, 'CALL_TRANSCRIBE_SETTINGS_URL', ''):
             from integrations.transcription.settings import TranscriptionSettingsClient
@@ -94,32 +99,26 @@ class StereoCallTranscriber:
             run_ffmpeg_extract_channel(wav_path, right_wav, 1)
 
             model = self._get_model()
-            left_result = transcribe_channel(
-                model=model,
-                wav_path=left_wav,
-                speaker=self.config.CALL_TRANSCRIBE_LEFT_LABEL,
-                channel_name='left',
-                language='ru',
-                beam_size=self.config.CALL_TRANSCRIBE_BEAM_SIZE,
-                vad_filter=self.config.CALL_TRANSCRIBE_VAD_FILTER,
-                vad_min_silence_ms=self.config.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS,
-                split_gap_seconds=self.config.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS,
-                punctuation_gap_seconds=self.config.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS,
-                max_phrase_seconds=self.config.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS,
-            )
-            right_result = transcribe_channel(
-                model=model,
-                wav_path=right_wav,
-                speaker=self.config.CALL_TRANSCRIBE_RIGHT_LABEL,
-                channel_name='right',
-                language='ru',
-                beam_size=self.config.CALL_TRANSCRIBE_BEAM_SIZE,
-                vad_filter=self.config.CALL_TRANSCRIBE_VAD_FILTER,
-                vad_min_silence_ms=self.config.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS,
-                split_gap_seconds=self.config.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS,
-                punctuation_gap_seconds=self.config.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS,
-                max_phrase_seconds=self.config.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS,
-            )
+
+            def recognize_channel(item):
+                path, name, label = item
+                return transcribe_channel(
+                    model=model,
+                    wav_path=path,
+                    speaker=label,
+                    channel_name=name,
+                    language='ru',
+                    beam_size=self.config.CALL_TRANSCRIBE_BEAM_SIZE,
+                    vad_filter=self.config.CALL_TRANSCRIBE_VAD_FILTER,
+                    vad_min_silence_ms=self.config.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS,
+                    split_gap_seconds=self.config.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS,
+                    punctuation_gap_seconds=self.config.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS,
+                    max_phrase_seconds=self.config.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS,
+                )
+            left_result, right_result = self._run_channels(recognize_channel, [
+                (left_wav, 'left', self.config.CALL_TRANSCRIBE_LEFT_LABEL),
+                (right_wav, 'right', self.config.CALL_TRANSCRIBE_RIGHT_LABEL),
+            ])
             return build_output_json(
                 input_wav=wav_path,
                 model_name=self.config.CALL_TRANSCRIBE_MODEL,
@@ -137,18 +136,20 @@ class StereoCallTranscriber:
         from integrations.transcription import gigaam
 
         audio_channels = gigaam.decode_stereo(wav_path)
-        results = []
-        for audio, name, label in zip(
-            audio_channels, ['left', 'right'],
-            [self.config.CALL_TRANSCRIBE_LEFT_LABEL, self.config.CALL_TRANSCRIBE_RIGHT_LABEL],
-        ):
-            results.append(gigaam.transcribe_channel(
+
+        def recognize_channel(item):
+            audio, name, label = item
+            return gigaam.transcribe_channel(
                 audio, self._get_model, speaker=label, channel_name=name,
                 vad_min_silence_ms=self.config.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS,
                 split_gap_seconds=self.config.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS,
                 punctuation_gap_seconds=self.config.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS,
                 max_phrase_seconds=self.config.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS,
-            ))
+            )
+        results = self._run_channels(recognize_channel, zip(
+            audio_channels, ['left', 'right'],
+            [self.config.CALL_TRANSCRIBE_LEFT_LABEL, self.config.CALL_TRANSCRIBE_RIGHT_LABEL],
+        ))
         payload = build_output_json(
             input_wav=wav_path, model_name=gigaam.MODEL_NAME,
             device='cpu', compute_type='int8', language='ru',
@@ -158,6 +159,15 @@ class StereoCallTranscriber:
         )
         payload['backend'] = 'gigaam'
         return payload
+
+    def _run_channels(self, recognize, channels):
+        workers = self._gigaam_channel_workers if self._backend == 'gigaam' else self._channel_workers
+        if workers == 1:
+            return list(map(recognize, channels))
+        # map preserves left/right ordering. The context also joins both workers
+        # on failure, before temporary WAVs are removed or a backend can change.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix='call-asr') as pool:
+            return list(pool.map(recognize, channels))
 
     def _get_model(self) -> Any:
         if self._model is not None:
@@ -184,6 +194,7 @@ class StereoCallTranscriber:
                     device=self.config.CALL_TRANSCRIBE_DEVICE,
                     compute_type=self.config.CALL_TRANSCRIBE_COMPUTE_TYPE,
                     cpu_threads=self.config.CALL_TRANSCRIBE_CPU_THREADS,
+                    num_workers=self._channel_workers,
                 )
         return self._model
 

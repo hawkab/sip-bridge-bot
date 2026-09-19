@@ -11,3 +11,4 @@ __pycache__/
 web/common.php
 web/vendor/
 web/sip-private-data/
+/var/

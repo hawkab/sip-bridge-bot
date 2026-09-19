@@ -106,6 +106,12 @@ class Config:
         ).strip()
         self.CALL_TRANSCRIBE_SETTINGS_TIMEOUT_SECONDS = float(os.environ.get("CALL_TRANSCRIBE_SETTINGS_TIMEOUT_SECONDS", "3"))
         self.CALL_TRANSCRIBE_CPU_THREADS = int(os.environ.get("CALL_TRANSCRIBE_CPU_THREADS", "2"))
+        self.CALL_TRANSCRIBE_CHANNEL_WORKERS = int(os.environ.get("CALL_TRANSCRIBE_CHANNEL_WORKERS", "1"))
+        self.CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS = int(os.environ.get(
+            "CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS", str(self.CALL_TRANSCRIBE_CHANNEL_WORKERS)))
+        if any(value not in (1, 2) for value in (
+            self.CALL_TRANSCRIBE_CHANNEL_WORKERS, self.CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS)):
+            raise ValueError("Transcription channel worker counts must be 1 or 2")
         if self.CALL_TRANSCRIBE_CPU_THREADS < 1:
             raise ValueError("CALL_TRANSCRIBE_CPU_THREADS must be positive")
         self.CALL_TRANSCRIBE_MODEL = os.environ.get("CALL_TRANSCRIBE_MODEL", "small").strip() or "small"
