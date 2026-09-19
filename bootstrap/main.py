@@ -14,6 +14,9 @@ from integrations.tg200.client import YeastarSMSClient
 from services.command_service import CommandService
 from integrations.event_store.sms_outbox import SmsOutboxClient
 from workers.sms_outbox import SmsOutboxWorker
+from integrations.event_store.voice_outbox import VoiceOutboxClient
+from integrations.asterisk.voice_calls import AsteriskVoiceCalls
+from workers.voice_outbox import VoiceOutboxWorker
 from services.delivery_service import DeliveryHub
 from services.event_router import send_startup_notification, start_cdr_monitor
 from services.system_ops import get_app_version_text
@@ -27,7 +30,8 @@ async def async_main() -> None:
     delivery = DeliveryHub(CONFIG)
     event_store = EventStoreClient(CONFIG)
     sms_outbox = SmsOutboxClient(CONFIG)
-    command_service = CommandService(ys, sms_outbox)
+    voice_outbox = VoiceOutboxClient(CONFIG)
+    command_service = CommandService(ys, sms_outbox, voice_outbox)
     transcriber = StereoCallTranscriber(CONFIG)
     transcription_pdf_renderer = TranscriptionPdfRenderer(CONFIG)
 
@@ -40,6 +44,9 @@ async def async_main() -> None:
 
     if sms_outbox.enabled:
         tasks.append(asyncio.create_task(SmsOutboxWorker(sms_outbox, ys, CONFIG, delivery).run_forever(), name="sms-outbox"))
+
+    if voice_outbox.enabled:
+        tasks.append(asyncio.create_task(VoiceOutboxWorker(voice_outbox, AsteriskVoiceCalls(CONFIG), delivery).run_forever(), name="voice-outbox"))
 
     if delivery.is_imap_enabled():
         mail_gateway = MailGateway(CONFIG, delivery, command_service)

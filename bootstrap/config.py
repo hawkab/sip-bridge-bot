@@ -98,6 +98,11 @@ class Config:
         self.EVENT_STORE_TIMEOUT_SECONDS = float(os.environ.get("EVENT_STORE_TIMEOUT_SECONDS", "20"))
 
         self.SMS_OUTBOX_URL = os.environ.get("SMS_OUTBOX_URL", urljoin(self.EVENT_STORE_SMS_URL, "sms_outbox.php") if self.EVENT_STORE_SMS_URL else "").strip()
+        self.VOICE_OUTBOX_URL = os.environ.get("VOICE_OUTBOX_URL", urljoin(self.EVENT_STORE_SMS_URL, "voice_outbox.php") if self.EVENT_STORE_SMS_URL else "").strip()
+        self.VOICE_CALLS_DIR = os.environ.get("VOICE_CALLS_DIR", "/opt/sms/var/voice-calls")
+        self.VOICE_CALLS_SPOOL = os.environ.get("VOICE_CALLS_SPOOL", "/var/spool/asterisk/outgoing")
+        self.VOICE_CALLS_ENDPOINT = os.environ.get("VOICE_CALLS_ENDPOINT", "gsm-port1")
+
         self.SMS_SPAN_OFFSET = int(os.environ.get("SMS_SPAN_OFFSET", "1"))
         self.SMS_SIM_PORTS = json.loads(os.environ.get("SMS_SIM_PORTS_JSON", '[{"port":1,"number":""},{"port":2,"number":""}]'))
         if not isinstance(self.SMS_SIM_PORTS, list) or not 1 <= len(self.SMS_SIM_PORTS) <= 32:

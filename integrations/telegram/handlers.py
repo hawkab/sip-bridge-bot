@@ -101,6 +101,8 @@ async def on_post_init(app: Application):
 
 
 def register_handlers(app: Application):
+    from integrations.telegram.voice_calls import register_voice_handlers
+    register_voice_handlers(app)
     app.add_handler(CommandHandler("sms", cmd_sms))
     app.add_handler(CommandHandler("sms_ports", cmd_sms_ports))
     app.add_handler(CommandHandler("start", start))

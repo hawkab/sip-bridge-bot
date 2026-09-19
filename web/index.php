@@ -5,6 +5,7 @@ require_once __DIR__ . '/common.php';
 require_once __DIR__ . '/transcription_settings_store.php';
 require_once __DIR__ . '/event_store.php';
 require_once __DIR__ . '/sms_outbox_store.php';
+require_once __DIR__ . '/voice_outbox_store.php';
 
 ensure_access_or_404();
 
@@ -97,6 +98,25 @@ if ($action !== '') {
     require_user_authenticated_json();
 
     switch ($action) {
+        case 'get_voice_outbox':
+            json_response(['ok'=>true, 'csrf_token'=>event_deletion_csrf_token()] + voice_state());
+            break;
+        case 'send_voice_call':
+        case 'cancel_voice_call':
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['ok'=>false, 'message'=>'Требуется POST.'], 405);
+            $data = $action === 'send_voice_call' ? $_POST : get_json_request_body();
+            if (!is_string($data['csrf_token'] ?? null) || !hash_equals(event_deletion_csrf_token(), $data['csrf_token'])) {
+                json_response(['ok'=>false, 'message'=>'Обновите страницу и повторите запрос.'], 403);
+            }
+            try {
+                $result = $action === 'send_voice_call' ? ['job'=>voice_enqueue($data, 'web', voice_uploaded_audio())] : voice_cancel((string) ($data['id'] ?? ''));
+                json_response(['ok'=>true] + $result);
+            } catch (InvalidArgumentException $error) {
+                json_response(['ok'=>false, 'message'=>$error->getMessage()], 400);
+            } catch (RuntimeException $error) {
+                json_response(['ok'=>false, 'message'=>$error->getMessage()], 500);
+            }
+            break;
         case 'get_sms_outbox':
             try {
                 json_response(['ok'=>true, 'csrf_token'=>event_deletion_csrf_token()] + sms_outbox_state());
@@ -513,6 +533,7 @@ $appConfig = [
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="notifications.js?v=20260920-02"></script>
+<script src="voice_calls.js?v=20260920-01"></script>
 <script>
 (() => {
     const APP_CONFIG = <?= json_encode($appConfig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
@@ -1131,7 +1152,7 @@ $appConfig = [
     }
 
     function renderToolbar(target) {
-        if (target === 'settings' || target === 'send_sms') return '';
+        if (['settings', 'send_sms', 'voice_calls'].includes(target)) return '';
         if (state.detailView && state.detailItem) {
             return `
                 <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
@@ -1155,6 +1176,7 @@ $appConfig = [
     function renderMainContent() {
         if (state.activeMenu === 'settings') return renderSettings();
         if (state.activeMenu === 'send_sms') return renderSmsComposer();
+        if (state.activeMenu === 'voice_calls') return SipVoiceCalls.render();
         return state.detailView && state.detailItem
             ? renderDetailCard()
             : (state.activeMenu === 'calls' ? renderCallsTable() : renderSmsTable());
@@ -1197,6 +1219,7 @@ $appConfig = [
                             <button class="btn ${state.activeMenu === 'calls' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="calls">Звонки</button>
                             <button class="btn ${state.activeMenu === 'sms' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="sms">СМС</button>
                             <button class="btn ${state.activeMenu === 'send_sms' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="send_sms">Отправить СМС</button>
+                            <button class="btn ${state.activeMenu === 'voice_calls' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="voice_calls">Голосовой вызов</button>
                             <button class="btn ${state.activeMenu === 'settings' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="settings">Настройки</button>
                         </div>
                     </aside>
@@ -1224,6 +1247,11 @@ $appConfig = [
         }
 
         app.addEventListener('submit', submitSms);
+        SipVoiceCalls.bind(app, {escape:escapeHtml, get:apiGet, post:apiPost,
+            active:() => state.authenticated && state.activeMenu === 'voice_calls', refresh:refreshMainArea,
+            upload:async body => parseResponse(await fetchWithConnectionWait(buildActionUrl('send_voice_call'), {
+                method:'POST', credentials:'same-origin', body
+            }))});
         app.addEventListener('input', (event) => {
             if (event.target.closest('#smsComposeForm')) syncSmsDraft();
         });
@@ -1268,6 +1296,7 @@ $appConfig = [
             }
             const menuButton = event.target.closest('[data-menu]');
             if (menuButton) {
+                if (state.activeMenu === 'voice_calls') SipVoiceCalls.leave();
                 clearDetail(true);
                 state.activeMenu = menuButton.dataset.menu || 'calls';
                 renderShell();
@@ -1366,6 +1395,7 @@ $appConfig = [
                 try {
                     await apiPost('logout');
                 } finally {
+                    SipVoiceCalls.leave(true);
                     state.authenticated = false;
                     state.calls.selected.clear();
                     state.sms.selected.clear();
@@ -1489,11 +1519,12 @@ $appConfig = [
     async function loadCurrentMenu() {
         if (state.activeMenu === 'settings') return loadSettings();
         if (state.activeMenu === 'send_sms') return loadSmsOutbox();
+        if (state.activeMenu === 'voice_calls') return SipVoiceCalls.load();
         return loadTarget(state.activeMenu);
     }
 
     function menuTitle() {
-        return { calls: 'Звонки', sms: 'СМС', send_sms: 'Отправить СМС', settings: 'Настройки' }[state.activeMenu] || 'Звонки';
+        return { calls: 'Звонки', sms: 'СМС', send_sms: 'Отправить СМС', voice_calls: 'Голосовой вызов', settings: 'Настройки' }[state.activeMenu] || 'Звонки';
     }
 
     function readSmsDraft() {
@@ -1759,6 +1790,7 @@ async function pollUpdates() {
 
         // Poll notifications without discarding an unsaved engine selection.
         if (state.activeMenu === 'settings') return;
+        if (state.activeMenu === 'voice_calls') { await SipVoiceCalls.poll(); return; }
         if (state.activeMenu === 'send_sms') {
             await loadSmsOutbox();
             const history = document.getElementById('smsOutboxHistory');

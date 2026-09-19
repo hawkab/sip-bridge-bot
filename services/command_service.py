@@ -22,6 +22,7 @@ from services.system_ops import (
 class CommandService:
     ys: object
     sms_outbox: object = None
+    voice_outbox: object = None
 
     async def execute(self, raw_command: str, *, source: str = "telegram", request_key: str | None = None) -> CommandResult:
         raw = (raw_command or "").strip()
@@ -130,6 +131,8 @@ class CommandService:
             "Доступные команды:\n"
             "/sms <SIM или номер отправителя> <получатель> <текст> — отправить СМС\n"
             "/sms_ports — номера отправителей\n"
+            "/voicecall <номер> [ГГГГ-ММ-ДД ЧЧ:ММ] — голосовой вызов через Telegram (МСК)\n"
+            "/voicecalls — расписание; /cancelcall ID — отмена\n"
             "/status — статус сервера\n"
             "/logs_os [N] — последние строки системного журнала\n"
             "/logs_sip [N] — последние строки журнала Asterisk\n"
