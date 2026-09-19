@@ -7,7 +7,8 @@ from services.command_service import execute_post_action
 
 
 async def _run_shared_command(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_command: str):
-    result = await context.bot_data["command_service"].execute(raw_command)
+    result = await context.bot_data["command_service"].execute(raw_command, source="telegram",
+        request_key=f"telegram:{update.effective_chat.id}:{update.effective_message.message_id}")
     await context.bot_data["delivery"].reply_telegram(update.effective_chat.id, result)
     execute_post_action(result.post_action)
 
@@ -81,6 +82,17 @@ async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _run_shared_command(update, context, "/update")
 
 
+@only_admin
+async def cmd_sms(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Keep spaces, apostrophes, quotes and line breaks exactly as typed.
+    await _run_shared_command(update, context, update.effective_message.text)
+
+
+@only_admin
+async def cmd_sms_ports(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _run_shared_command(update, context, "/sms_ports")
+
+
 async def on_post_init(app: Application):
     delivery = app.bot_data.get("delivery")
     if delivery:
@@ -89,6 +101,8 @@ async def on_post_init(app: Application):
 
 
 def register_handlers(app: Application):
+    app.add_handler(CommandHandler("sms", cmd_sms))
+    app.add_handler(CommandHandler("sms_ports", cmd_sms_ports))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("logs_os", cmd_logs_os))

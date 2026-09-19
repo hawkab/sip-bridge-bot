@@ -3,6 +3,7 @@ import email
 import imaplib
 import logging
 import re
+import hashlib
 from dataclasses import dataclass
 from email import policy
 from email.parser import BytesParser
@@ -19,6 +20,7 @@ class InboundMailCommand:
     subject: str
     command: str
     uid: bytes
+    request_key: str = ""
 
 
 class MailGateway:
@@ -42,9 +44,9 @@ class MailGateway:
             await asyncio.sleep(self.config.EMAIL_POLL_INTERVAL)
 
     async def _handle_command(self, item: InboundMailCommand) -> None:
-        logger.info("Executing email command from %s: %s", item.sender, item.command)
-        result = await self.command_service.execute(item.command)
-        subject = f"SipBridgeBot: {item.command}"
+        logger.info("Executing email command from %s: %s", item.sender, item.command.split()[0])
+        result = await self.command_service.execute(item.command, source="email", request_key=item.request_key or "email:" + hashlib.sha256(item.uid).hexdigest())
+        subject = f"SipBridgeBot: {item.command.split()[0]}"
         await self.delivery.reply_email(item.sender, subject, result)
         execute_post_action(result.post_action)
 
@@ -94,7 +96,7 @@ class MailGateway:
         command = self._extract_command(subject, body)
         if not command:
             return None
-        return InboundMailCommand(sender=sender, subject=subject, command=command, uid=uid)
+        return InboundMailCommand(sender=sender, subject=subject, command=command, uid=uid, request_key="email:" + hashlib.sha256(raw_msg).hexdigest())
 
     def _extract_body_text(self, message: email.message.EmailMessage) -> str:
         if message.is_multipart():

@@ -12,6 +12,8 @@ from integrations.transcription.stereo import StereoCallTranscriber
 from integrations.tg200.adapter import start_reader as start_ys_reader
 from integrations.tg200.client import YeastarSMSClient
 from services.command_service import CommandService
+from integrations.event_store.sms_outbox import SmsOutboxClient
+from workers.sms_outbox import SmsOutboxWorker
 from services.delivery_service import DeliveryHub
 from services.event_router import send_startup_notification, start_cdr_monitor
 from services.system_ops import get_app_version_text
@@ -21,10 +23,11 @@ logger = logging.getLogger(__name__)
 
 
 async def async_main() -> None:
-    ys = YeastarSMSClient(CONFIG.TG_HOST, CONFIG.TG_PORT, CONFIG.TG_USER, CONFIG.TG_PASS)
+    ys = YeastarSMSClient(CONFIG.TG_HOST, CONFIG.TG_PORT, CONFIG.TG_USER, CONFIG.TG_PASS, span_offset=CONFIG.SMS_SPAN_OFFSET)
     delivery = DeliveryHub(CONFIG)
     event_store = EventStoreClient(CONFIG)
-    command_service = CommandService(ys)
+    sms_outbox = SmsOutboxClient(CONFIG)
+    command_service = CommandService(ys, sms_outbox)
     transcriber = StereoCallTranscriber(CONFIG)
     transcription_pdf_renderer = TranscriptionPdfRenderer(CONFIG)
 
@@ -34,6 +37,9 @@ async def async_main() -> None:
     tasks = [
         asyncio.create_task(run_telegram_transport(ys, delivery, command_service), name="telegram-transport"),
     ]
+
+    if sms_outbox.enabled:
+        tasks.append(asyncio.create_task(SmsOutboxWorker(sms_outbox, ys, CONFIG, delivery).run_forever(), name="sms-outbox"))
 
     if delivery.is_imap_enabled():
         mail_gateway = MailGateway(CONFIG, delivery, command_service)

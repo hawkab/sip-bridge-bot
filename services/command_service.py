@@ -2,6 +2,8 @@ import os
 import shlex
 import subprocess
 import time
+import re
+import secrets
 from dataclasses import dataclass
 
 from bootstrap.config import CONFIG
@@ -19,11 +21,36 @@ from services.system_ops import (
 @dataclass
 class CommandService:
     ys: object
+    sms_outbox: object = None
 
-    async def execute(self, raw_command: str) -> CommandResult:
+    async def execute(self, raw_command: str, *, source: str = "telegram", request_key: str | None = None) -> CommandResult:
         raw = (raw_command or "").strip()
         if not raw:
             return self._help_result()
+
+        if re.match(r"^/?sms(?:@\w+)?(?:\s|$)", raw):
+            match = re.fullmatch(r"/?sms(?:@\w+)?\s+(\S+)\s+(\S+)\s+([\s\S]+)", raw)
+            if not match:
+                return CommandResult([ResponseItem(kind="text", text="Формат: /sms <SIM или номер отправителя> <номер получателя> <текст>\nНапример: /sms 1 +79991234567 Привет!\n/sms_ports — список отправителей")])
+            if not self.sms_outbox:
+                return CommandResult([ResponseItem(kind="text", text="Отправка СМС не настроена.")])
+            sender, number, message = match.groups()
+            try:
+                response = await self.sms_outbox.request("enqueue", sender=sender, number=number, text=message,
+                    source=source, request_key=request_key or secrets.token_hex(20))
+                job = response["job"]
+                return CommandResult([ResponseItem(kind="text", text=f"СМС {job['id']}\nОт: {job['sender'] or 'SIM ' + str(job['port'])}\nКому: {job['number']}\n{job['message']}\nРезультат отправки придёт отдельным уведомлением.")])
+            except Exception as error:
+                return CommandResult([ResponseItem(kind="text", text=f"Не удалось поставить СМС в очередь: {error}")])
+        if raw in {"/sms_ports", "sms_ports"}:
+            if not self.sms_outbox:
+                return CommandResult([ResponseItem(kind="text", text="Отправка СМС не настроена.")])
+            try:
+                response = await self.sms_outbox.request()
+                lines = [f"SIM {p['port']}: {p['number'] or 'номер не настроен'}" for p in response['ports']]
+                return CommandResult([ResponseItem(kind="text", text="Отправители:\n" + "\n".join(lines))])
+            except Exception:
+                return CommandResult([ResponseItem(kind="text", text="Не удалось получить список SIM.")])
 
         try:
             parts = shlex.split(raw)
@@ -101,6 +128,8 @@ class CommandService:
     def _help_text(self) -> str:
         return (
             "Доступные команды:\n"
+            "/sms <SIM или номер отправителя> <получатель> <текст> — отправить СМС\n"
+            "/sms_ports — номера отправителей\n"
             "/status — статус сервера\n"
             "/logs_os [N] — последние строки системного журнала\n"
             "/logs_sip [N] — последние строки журнала Asterisk\n"

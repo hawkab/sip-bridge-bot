@@ -1,4 +1,6 @@
 import os, sys
+import json
+import re
 from pathlib import Path
 import logging
 from urllib.parse import urljoin
@@ -94,6 +96,19 @@ class Config:
         self.EVENT_STORE_CALL_URL = os.environ.get("EVENT_STORE_CALL_URL", "").strip()
         self.EVENT_STORE_AUTH_TOKEN = os.environ.get("EVENT_STORE_AUTH_TOKEN", "").strip()
         self.EVENT_STORE_TIMEOUT_SECONDS = float(os.environ.get("EVENT_STORE_TIMEOUT_SECONDS", "20"))
+
+        self.SMS_OUTBOX_URL = os.environ.get("SMS_OUTBOX_URL", urljoin(self.EVENT_STORE_SMS_URL, "sms_outbox.php") if self.EVENT_STORE_SMS_URL else "").strip()
+        self.SMS_SPAN_OFFSET = int(os.environ.get("SMS_SPAN_OFFSET", "1"))
+        self.SMS_SIM_PORTS = json.loads(os.environ.get("SMS_SIM_PORTS_JSON", '[{"port":1,"number":""},{"port":2,"number":""}]'))
+        if not isinstance(self.SMS_SIM_PORTS, list) or not 1 <= len(self.SMS_SIM_PORTS) <= 32:
+            raise ValueError("SMS_SIM_PORTS_JSON must be a list of SIM ports")
+        seen_ports = set()
+        for port in self.SMS_SIM_PORTS:
+            if (not isinstance(port, dict) or type(port.get("port")) is not int or not 1 <= port["port"] <= 32
+                or port["port"] in seen_ports or not isinstance(port.get("number"), str)
+                or (port["number"] and not re.fullmatch(r"\+[1-9][0-9]{6,14}", port["number"]))):
+                raise ValueError("Invalid SMS_SIM_PORTS_JSON entry")
+            seen_ports.add(port["port"])
 
         self.CALL_TRANSCRIBE_ENABLED = os.environ.get("CALL_TRANSCRIBE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
         self.CALL_TRANSCRIBE_BACKEND = os.environ.get("CALL_TRANSCRIBE_BACKEND", "gigaam").strip().lower()
