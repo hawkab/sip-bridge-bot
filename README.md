@@ -1,5 +1,7 @@
 # SipBridgeBot
 
+Распознавание звонков: [GigaAM / faster-whisper, настройка и установка](docs/transcription.md). Выбор движка в веб-интерфейсе: [обновление хостинга](web/README.md).
+
 Телеграм-бот для домашнего/офисного VoIP-комплекса: присылает **входящие SMS** со шлюза Yeastar TG (режим *SMS Account* по TCP) в личный Telegram-чат и предоставляет набор **админ-команд** для сервера: статус, логи OS/Asterisk, перезапуск Asterisk, перезагрузка хоста и **дистанционное обновление** бота (`git pull` + `systemctl restart`).  
 Отправка SMS из Telegram пока недоступна: бот работает только на приём SMS.
 
@@ -265,4 +267,3 @@
 
     replace-with-secret-hash
     /logs_sip 300
-
