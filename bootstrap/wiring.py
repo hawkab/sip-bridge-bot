@@ -10,6 +10,10 @@ def configure_logging() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # Telegram URLs contain the bot token; HTTP request INFO logs also flood
+    # the journal while polling durable outboxes.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def timeout_env(name: str, default: str) -> float:
