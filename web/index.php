@@ -1289,11 +1289,6 @@ $appConfig = [
                 }
                 return;
             }
-            if (event.target.closest('#reloadTranscriptionSettings')) {
-                await loadSettings();
-                refreshMainArea();
-                return;
-            }
             const menuButton = event.target.closest('[data-menu]');
             if (menuButton) {
                 if (state.activeMenu === 'voice_calls') SipVoiceCalls.leave();
@@ -1636,7 +1631,6 @@ $appConfig = [
                 ${s.message ? `<div class="alert alert-success" role="status">${escapeHtml(s.message)}</div>` : ''}
                 <div class="d-flex gap-2">
                     <button id="saveTranscriptionSettings" class="btn btn-primary" type="button" ${s.loading || s.saving || !s.csrfToken ? 'disabled' : ''}>${s.saving ? 'Сохранение…' : 'Сохранить'}</button>
-                    <button id="reloadTranscriptionSettings" class="btn btn-outline-secondary" type="button" ${s.loading || s.saving ? 'disabled' : ''}>Обновить</button>
                 </div>
             </div>
         </section>`;
