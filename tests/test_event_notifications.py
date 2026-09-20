@@ -46,7 +46,7 @@ class EventNotificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Кому: `номер не определён (SIM 3)`', text)
         self.assertEqual(self.store.save_sms.call_args.kwargs['local_number'], '')
 
-    async def test_outgoing_results_are_saved_without_telegram_notifications(self):
+    async def test_outgoing_results_are_saved_without_telegram_or_email_notifications(self):
         api = SimpleNamespace(request=AsyncMock(return_value={'has_due': False}))
         sms = SmsOutboxWorker(api, None, self.config, self.delivery)
         sms.pending_result = ({'id': 'sms', 'claim_token': 'token', 'sender': '+79990000001',
@@ -62,7 +62,7 @@ class EventNotificationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(api.request.call_args.kwargs['status'], status)
             self.assertTrue(calls.save.call_args.args[0]['reported'])
         self.delivery._notify_telegram.assert_not_awaited()
-        self.assertEqual(self.delivery._notify_email.await_count, 3)
+        self.delivery._notify_email.assert_not_awaited()
 
 
 if __name__ == '__main__':
