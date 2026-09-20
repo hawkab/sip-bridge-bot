@@ -854,7 +854,7 @@ $appConfig = [
                             <dt class="col-sm-3">Дата</dt><dd class="col-sm-9">${escapeHtml(item.displayTimestamp || item.timestamp || '')}</dd>
                             <dt class="col-sm-3">Тип</dt><dd class="col-sm-9">${escapeHtml(item.type || '')}</dd>
                             <dt class="col-sm-3">Номер</dt><dd class="col-sm-9"><span class="phone-link" data-phone="${escapeHtml(item.number || '')}">${escapeHtml(item.number || '')}</span></dd>
-                            <dt class="col-sm-3">${item.type === 'входящий' ? 'На какой номер' : 'С какого номера'}</dt><dd class="col-sm-9">${escapeHtml(item.local_number || 'Не сохранён в старой записи')}${item.sim_port ? ` · SIM ${escapeHtml(item.sim_port)}` : ''}</dd>
+                            <dt class="col-sm-3">${item.type === 'входящий' ? 'На какой номер' : 'С какого номера'}</dt><dd class="col-sm-9">${escapeHtml(item.local_number || 'Номер не сохранён')}${item.sim_port ? ` · SIM ${escapeHtml(item.sim_port)}` : ''}</dd>
                             <dt class="col-sm-3">Длительность</dt><dd class="col-sm-9">${escapeHtml(String(item.duration ?? ''))} сек.</dd>
                             <dt class="col-sm-3">Запись</dt>
                             <dd class="col-sm-9">
@@ -1588,7 +1588,7 @@ $appConfig = [
         const unavailable = locked && !s.canReply;
         return `<section class="card shadow-sm sms-composer"><div class="card-body p-3 p-md-4">
             <h2 class="h5">${card ? 'Переписка по СМС' : 'Новая СМС'}</h2>
-            ${card ? `<p class="small text-secondary">На какой номер: <strong>${escapeHtml(item.local_number || 'Не сохранён в старой записи')}</strong></p>` : ''}
+            ${card ? `<p class="small text-secondary">На какой номер: <strong>${escapeHtml(item.local_number || 'Номер не сохранён')}</strong></p>` : ''}
             <p class="small text-secondary" id="smsGatewayStatus">${s.connected ? 'Шлюз подключён' : 'Ожидание подключения шлюза. Сообщения сохраняются в очереди.'}</p>
             <form id="smsComposeForm">
                 <div class="row g-3 mb-3">
