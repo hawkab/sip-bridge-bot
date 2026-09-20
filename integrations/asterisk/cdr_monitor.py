@@ -33,6 +33,7 @@ class CDRMonitor:
             self.last_position = f.tell()
 
         self._task = asyncio.create_task(self._run())
+        return self._task
 
     async def _run(self):
         """Основной цикл проверки новых строк и таймаута группы."""

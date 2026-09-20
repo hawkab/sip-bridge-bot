@@ -7,7 +7,8 @@ from bootstrap.wiring import configure_logging
 from integrations.email.imap_reader import MailGateway
 from integrations.event_store.client import EventStoreClient
 from integrations.telegram.adapter import run_telegram_transport
-from integrations.transcription.pdf import TranscriptionPdfRenderer
+from integrations.transcription.lazy_pdf import LazyTranscriptionPdfRenderer
+from integrations.http import create_http_client
 from integrations.transcription.stereo import StereoCallTranscriber
 from integrations.tg200.adapter import start_reader as start_ys_reader
 from integrations.tg200.client import YeastarSMSClient
@@ -26,38 +27,45 @@ logger = logging.getLogger(__name__)
 
 
 async def async_main() -> None:
+    async with create_http_client() as http:
+        await run_bot(http)
+
+
+async def run_bot(http) -> None:
     ys = YeastarSMSClient(CONFIG.TG_HOST, CONFIG.TG_PORT, CONFIG.TG_USER, CONFIG.TG_PASS, span_offset=CONFIG.SMS_SPAN_OFFSET)
     delivery = DeliveryHub(CONFIG)
-    event_store = EventStoreClient(CONFIG)
-    sms_outbox = SmsOutboxClient(CONFIG)
-    voice_outbox = VoiceOutboxClient(CONFIG)
+    event_store = EventStoreClient(CONFIG, http)
+    sms_outbox = SmsOutboxClient(CONFIG, http)
+    voice_outbox = VoiceOutboxClient(CONFIG, http)
     command_service = CommandService(ys, sms_outbox, voice_outbox)
-    transcriber = StereoCallTranscriber(CONFIG)
-    transcription_pdf_renderer = TranscriptionPdfRenderer(CONFIG)
+    transcriber = StereoCallTranscriber(CONFIG, http)
+    transcription_pdf_renderer = LazyTranscriptionPdfRenderer(CONFIG)
 
-    await start_ys_reader(ys, delivery, event_store)
-    await start_cdr_monitor(delivery, event_store, transcriber, transcription_pdf_renderer)
+    tasks = []
+    try:
+        tasks.append(await start_ys_reader(ys, delivery, event_store))
+        tasks.append(await start_cdr_monitor(delivery, event_store, transcriber, transcription_pdf_renderer))
+        tasks.append(asyncio.create_task(run_telegram_transport(ys, delivery, command_service), name="telegram-transport"))
 
-    tasks = [
-        asyncio.create_task(run_telegram_transport(ys, delivery, command_service), name="telegram-transport"),
-    ]
+        if sms_outbox.enabled:
+            tasks.append(asyncio.create_task(SmsOutboxWorker(sms_outbox, ys, CONFIG, delivery).run_forever(), name="sms-outbox"))
+        if voice_outbox.enabled:
+            tasks.append(asyncio.create_task(VoiceOutboxWorker(voice_outbox, AsteriskVoiceCalls(CONFIG), delivery).run_forever(), name="voice-outbox"))
+        if delivery.is_imap_enabled():
+            mail_gateway = MailGateway(CONFIG, delivery, command_service)
+            tasks.append(asyncio.create_task(mail_gateway.run_forever(), name="mail-gateway"))
+        else:
+            logger.info("Email inbound gateway is disabled")
 
-    if sms_outbox.enabled:
-        tasks.append(asyncio.create_task(SmsOutboxWorker(sms_outbox, ys, CONFIG, delivery).run_forever(), name="sms-outbox"))
-
-    if voice_outbox.enabled:
-        tasks.append(asyncio.create_task(VoiceOutboxWorker(voice_outbox, AsteriskVoiceCalls(CONFIG), delivery).run_forever(), name="voice-outbox"))
-
-    if delivery.is_imap_enabled():
-        mail_gateway = MailGateway(CONFIG, delivery, command_service)
-        tasks.append(asyncio.create_task(mail_gateway.run_forever(), name="mail-gateway"))
-    else:
-        logger.info("Email inbound gateway is disabled")
-
-    await asyncio.sleep(1)
-    await send_startup_notification(delivery, get_app_version_text())
-
-    await asyncio.gather(*tasks)
+        await asyncio.sleep(1)
+        await send_startup_notification(delivery, get_app_version_text())
+        await asyncio.gather(*tasks)
+    finally:
+        # Stop API users before the shared HTTP pool is closed by async_main.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await transcriber.aclose()
 
 
 def main():

@@ -9,9 +9,18 @@ function check(bool $ok, string $message): void { if (!$ok) throw new RuntimeExc
 function invalid(callable $fn): void { try { $fn(); } catch (InvalidArgumentException $e) { return; } throw new RuntimeException('Expected validation error'); }
 mkdir($root,0700);
 try {
+    check(voice_worker_action(['action'=>'heartbeat'])['has_due'] === false, 'Empty voice queue hint');
+    $path = $root.'/voice-outbox.json';
+    $store = json_decode(file_get_contents($path), true);
+    $store['worker_seen'] = time()-1;
+    file_put_contents($path, json_encode($store));
+    $before = file_get_contents($path);
+    voice_worker_action(['action'=>'heartbeat']);
+    check(file_get_contents($path) === $before, 'Repeated idle heartbeat does not rewrite storage');
     $audio = str_repeat('sample', 100);
     $request = ['request_key'=>'voice-request-0001','number'=>'+79991111111','scheduled_at'=>''];
     $job = voice_enqueue($request, 'web', $audio);
+    check(voice_worker_action(['action'=>'heartbeat'])['has_due'] === true, 'Due call discovered without claiming');
     check(voice_enqueue($request, 'web', $audio)['id'] === $job['id'], 'Idempotent audio upload');
     invalid(fn()=>voice_enqueue($request, 'web', $audio.'different'));
     invalid(fn()=>voice_enqueue(array_replace($request,['number'=>"+79991111111\nApplication: System"]), 'web', $audio));
@@ -24,6 +33,7 @@ try {
     $claims=[];
     foreach($processes as [$process,$output]) { $reply=json_decode(stream_get_contents($output),true); fclose($output); check(proc_close($process)===0,'Worker exits'); if($reply['job'])$claims[]=$reply['job']; }
     check(count($claims)===1 && $claims[0]['id']===$job['id'], 'Exactly one worker claims due call');
+    check(voice_worker_action(['action'=>'heartbeat'])['has_due'] === false, 'Future schedule does not trigger an early claim');
     invalid(fn()=>voice_cancel($job['id']));
     check(voice_cancel($future['id'])['job']['status']==='cancelled','Cancel future call');
     check(!is_file($root.'/voice-audio/'.$future['id'].'.audio'), 'Cancelled transport audio released after commit');

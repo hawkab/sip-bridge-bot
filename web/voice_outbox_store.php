@@ -131,7 +131,14 @@ function voice_cancel(string $id): array
 function voice_worker_action(array $data): array
 {
     return voice_transaction(static function(array &$store) use ($data): array {
-        if ($data['action'] === 'heartbeat') { $store['worker_seen'] = time(); return []; }
+        if ($data['action'] === 'heartbeat') {
+            if ($store['worker_seen'] <= time()-15) $store['worker_seen'] = time();
+            $due = false;
+            foreach ($store['jobs'] as $job) {
+                if ($job['status'] === 'queued' && $job['scheduled_unix'] <= time()) { $due = true; break; }
+            }
+            return ['has_due'=>$due];
+        }
         if ($data['action'] === 'claim') {
             // Serialize calls even if a second worker is accidentally started.
             foreach ($store['jobs'] as $job) if ($job['status'] === 'calling') return ['job'=>null];

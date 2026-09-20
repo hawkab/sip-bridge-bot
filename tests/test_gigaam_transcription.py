@@ -118,7 +118,7 @@ class TranscriptionTests(unittest.TestCase):
             words: list
         model = Mock()
         model.transcribe.side_effect = lambda *a, **k: (iter([Segment('Алло.', .1, .5, [Word()])]), SimpleNamespace(language='ru', language_probability=1))
-        with patch.object(stereo, 'decode_audio', return_value=np.ones(16000 * 12, dtype=np.float32)), patch.object(stereo, 'get_speech_timestamps', return_value=[{'start': 16000, 'end': 32000}, {'start': 160000, 'end': 176000}]):
+        with patch('faster_whisper.audio.decode_audio', return_value=np.ones(16000 * 12, dtype=np.float32)), patch('faster_whisper.vad.get_speech_timestamps', return_value=[{'start': 16000, 'end': 32000}, {'start': 160000, 'end': 176000}]):
             result = stereo.transcribe_channel(model, Path('unused.wav'), 'S', 'left', 'ru', 5, True, 500, .8, .35, 0)
         self.assertEqual([r['start'] for r in result.segments], [1.1, 10.1])
         self.assertEqual([r['text'] for r in result.segments], ['Алло.', 'Алло.'])

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from integrations.http import HostingHttpClient
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +18,9 @@ class CallStoreResult:
     error_message: str | None = None
 
 
-class EventStoreClient:
-    def __init__(self, config):
+class EventStoreClient(HostingHttpClient):
+    def __init__(self, config, http_client=None):
+        super().__init__(http_client)
         self.config = config
 
     def is_sms_enabled(self) -> bool:
@@ -67,11 +69,11 @@ class EventStoreClient:
                 files = {
                     'recording': (
                         recording_name or os.path.basename(recording_path),
-                        source.read(),
+                        source,
                         content_type,
                     )
                 }
-            return await self._post_form(self.config.EVENT_STORE_CALL_URL, data, files, 'call')
+                return await self._post_form(self.config.EVENT_STORE_CALL_URL, data, files, 'call')
 
         payload = {
             'type': call_type,
@@ -85,13 +87,10 @@ class EventStoreClient:
 
     async def _post_json(self, url: str, payload: dict, event_kind: str) -> CallStoreResult:
         try:
-            async with httpx.AsyncClient(timeout=self.config.EVENT_STORE_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    url,
-                    json=payload,
-                    headers=self._build_headers(json_request=True),
-                    follow_redirects=True,
-                )
+            response = await self.http.post(
+                url, json=payload, headers=self._build_headers(json_request=True),
+                follow_redirects=True, timeout=self.config.EVENT_STORE_TIMEOUT_SECONDS,
+            )
             return self._parse_response(response, event_kind)
         except Exception as exc:
             logger.exception('Failed to save %s event via JSON endpoint %s', event_kind, url)
@@ -99,14 +98,10 @@ class EventStoreClient:
 
     async def _post_form(self, url: str, data: dict, files: dict, event_kind: str) -> CallStoreResult:
         try:
-            async with httpx.AsyncClient(timeout=self.config.EVENT_STORE_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    url,
-                    data=data,
-                    files=files,
-                    headers=self._build_headers(json_request=False),
-                    follow_redirects=True,
-                )
+            response = await self.http.post(
+                url, data=data, files=files, headers=self._build_headers(json_request=False),
+                follow_redirects=True, timeout=self.config.EVENT_STORE_TIMEOUT_SECONDS,
+            )
             return self._parse_response(response, event_kind)
         except Exception as exc:
             logger.exception('Failed to save %s event via multipart endpoint %s', event_kind, url)

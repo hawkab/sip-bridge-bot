@@ -70,7 +70,10 @@ async def start_cdr_monitor(delivery: DeliveryHub, event_store: EventStoreClient
 
     cdr_file = '/var/log/asterisk/cdr-csv/Master.csv'
     monitor = CDRMonitor(cdr_file, cdr_group_callback, check_interval=5.0, group_timeout=30.0)
-    asyncio.create_task(monitor.start())
+    async def run_monitor():
+        task = await monitor.start()
+        await task
+    return asyncio.create_task(run_monitor(), name='cdr-monitor')
 
 
 async def handle_sms_notification(delivery: DeliveryHub, event_store: EventStoreClient, sender: str, sim: str, when: str, text: str) -> None:

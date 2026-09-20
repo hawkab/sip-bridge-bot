@@ -5,10 +5,23 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import time
 import wave
 
 MAX_SECONDS = 120
+
+
+def pcm_has_signal(wav):
+    # Stop after the first audible sample; don't copy/scan a whole two-minute
+    # recording in Python. The converted output is always little-endian PCM16.
+    while frames := wav.readframes(8192):
+        samples = array.array('h', frames)
+        if sys.byteorder != 'little':
+            samples.byteswap()
+        if any(sample >= 16 or sample <= -16 for sample in samples):
+            return True
+    return False
 
 
 def atomic_json(path, data):
@@ -46,11 +59,10 @@ async def convert_audio(audio, destination):
             raise ValueError('Не удалось прочитать аудио. Поддерживаются OGG, WebM, MP3, M4A и WAV.')
         with wave.open(str(destination), 'rb') as wav:
             seconds = wav.getnframes()/wav.getframerate()
-            samples = array.array('h', wav.readframes(wav.getnframes()))
-        if not 0.3 <= seconds <= MAX_SECONDS:
-            raise ValueError('Длительность записи должна быть от 0,3 до 120 секунд.')
-        if not samples or max(abs(x) for x in samples) < 16:
-            raise ValueError('В записи тишина. Запишите голос ещё раз.')
+            if not 0.3 <= seconds <= MAX_SECONDS:
+                raise ValueError('Длительность записи должна быть от 0,3 до 120 секунд.')
+            if not pcm_has_signal(wav):
+                raise ValueError('В записи тишина. Запишите голос ещё раз.')
         return seconds
     finally:
         source.unlink(missing_ok=True)

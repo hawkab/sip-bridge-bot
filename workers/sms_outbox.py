@@ -18,14 +18,14 @@ class SmsOutboxWorker:
                 raise
             except Exception:
                 logger.exception('SMS outbox temporarily unavailable')
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
 
     async def run_once(self):
-        await self.client.request('heartbeat', ports=self.config.SMS_SIM_PORTS, connected=self.gateway.ready.is_set())
+        heartbeat = await self.client.request('heartbeat', ports=self.config.SMS_SIM_PORTS, connected=self.gateway.ready.is_set())
         if self.pending_result:
             await self._complete()
             return
-        if not self.gateway.ready.is_set():
+        if not self.gateway.ready.is_set() or heartbeat.get('has_pending') is False:
             return
         claimed = await self.client.request('claim')
         job = claimed.get('job')

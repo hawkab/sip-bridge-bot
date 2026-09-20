@@ -9,9 +9,21 @@ function check(bool $ok, string $message): void { if (!$ok) throw new RuntimeExc
 function invalid(callable $fn): void { try { $fn(); } catch (InvalidArgumentException $e) {return;} throw new RuntimeException('Expected validation error'); }
 mkdir($root,0700);
 try {
-    sms_outbox_heartbeat(['ports'=>[['port'=>1,'number'=>'+79991111111'],['port'=>2,'number'=>'+79992222222']], 'connected'=>true]);
+    $heartbeat = ['ports'=>[['port'=>1,'number'=>'+79991111111'],['port'=>2,'number'=>'+79992222222']], 'connected'=>true];
+    check(sms_outbox_heartbeat($heartbeat)['has_pending'] === false, 'Empty queue hint');
+    $path = $root.'/sms-outbox.json';
+    $store = json_decode(file_get_contents($path), true);
+    $store['worker_seen'] = time()-1;
+    file_put_contents($path, json_encode($store));
+    $before = file_get_contents($path);
+    sms_outbox_heartbeat($heartbeat);
+    check(file_get_contents($path) === $before, 'Repeated idle heartbeat does not rewrite storage');
+    sms_outbox_heartbeat(array_replace($heartbeat, ['connected'=>false]));
+    check(sms_outbox_state()['connected'] === false, 'Gateway disconnect is applied immediately');
+    sms_outbox_heartbeat($heartbeat);
     $request=['request_key'=>'test-request-0001','sender'=>'1','number'=>'+79992222222','text'=>'Привет + "мир"!'];
     $job=sms_outbox_enqueue($request,'web');
+    check(sms_outbox_heartbeat($heartbeat)['has_pending'] === true, 'Queued SMS discovered without claiming');
     check(sms_outbox_enqueue($request,'web')['id']===$job['id'],'Idempotent enqueue');
     invalid(fn()=>sms_outbox_enqueue(array_replace($request,['text'=>'changed']),'web'));
     invalid(fn()=>sms_outbox_enqueue(array_replace($request,['sender'=>'3']),'web'));
@@ -19,6 +31,7 @@ try {
     invalid(fn()=>sms_outbox_enqueue(array_replace($request,['text'=>str_repeat('я',513)]),'web'));
     $claimed=sms_outbox_claim()['job'];
     check($claimed['id']===$job['id'] && strlen($claimed['claim_token'])===48,'Claim returns token');
+    check(sms_outbox_heartbeat($heartbeat)['has_pending'] === false, 'Sending SMS is not pending again');
     check(sms_outbox_claim()['job']===null,'Claimed SMS never sent twice');
     $public=sms_outbox_state()['jobs'][0];
     check(!isset($public['claim_token'])&&!isset($public['request_key']),'No internal tokens in UI');

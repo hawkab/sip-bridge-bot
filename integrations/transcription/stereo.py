@@ -12,12 +12,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from faster_whisper import WhisperModel
-from faster_whisper.audio import decode_audio
-from faster_whisper.vad import VadOptions, get_speech_timestamps
-import numpy as np
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +32,7 @@ class ChannelResult:
 
 
 class StereoCallTranscriber:
-    def __init__(self, config):
+    def __init__(self, config, http_client=None):
         self.config = config
         self._model: Any | None = None
         self._model_lock = Lock()
@@ -47,7 +45,11 @@ class StereoCallTranscriber:
         self._settings_client = None
         if getattr(config, 'CALL_TRANSCRIBE_SETTINGS_URL', ''):
             from integrations.transcription.settings import TranscriptionSettingsClient
-            self._settings_client = TranscriptionSettingsClient(config)
+            self._settings_client = TranscriptionSettingsClient(config, http_client)
+
+    async def aclose(self):
+        if self._settings_client is not None:
+            await self._settings_client.aclose()
 
     def is_enabled(self) -> bool:
         return bool(self.config.CALL_TRANSCRIBE_ENABLED)
@@ -189,6 +191,7 @@ class StereoCallTranscriber:
                     self.config.CALL_TRANSCRIBE_DEVICE,
                     self.config.CALL_TRANSCRIBE_COMPUTE_TYPE,
                 )
+                from faster_whisper import WhisperModel
                 self._model = WhisperModel(
                     self.config.CALL_TRANSCRIBE_MODEL,
                     device=self.config.CALL_TRANSCRIBE_DEVICE,
@@ -250,6 +253,10 @@ def transcribe_channel(
     punctuation_gap_seconds: float,
     max_phrase_seconds: float,
 ) -> ChannelResult:
+    from faster_whisper.audio import decode_audio
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+    import numpy as np
+
     kwargs: dict[str, Any] = {
         'beam_size': beam_size,
         # Decode separate VAD intervals so repeated IVR prompts keep their place.

@@ -16,10 +16,10 @@ class VoiceOutboxWorker:
                 raise
             except Exception:
                 logger.exception('Voice call queue temporarily unavailable')
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
 
     async def run_once(self):
-        await self.client.request('heartbeat')
+        heartbeat = await self.client.request('heartbeat')
         active = False
         for job in self.calls.journals():
             if job.get('reported'):
@@ -32,7 +32,7 @@ class VoiceOutboxWorker:
             self.calls.save({**job, 'reported': True, 'result': result})
             await self.delivery.notify_event(subject='SipBridgeBot: голосовой вызов',
                 text=f"Вызов {job['id']}\nКому: {job['number']}\n{result['message']}", parse_mode=None)
-        if active or not await self.calls.ready():
+        if active or heartbeat.get('has_due') is False or not await self.calls.ready():
             return
         job = (await self.client.request('claim')).get('job')
         if not job:

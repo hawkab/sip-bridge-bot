@@ -20,7 +20,6 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
     async def test_selection_and_invalid_response_keep_last_known_value(self):
         settings = TranscriptionSettingsClient(self.config())
         client = AsyncMock()
-        client.__aenter__.return_value = client
         request = httpx.Request('GET', settings.url)
         client.get.side_effect = [
             httpx.Response(200, json={'ok': True, 'settings': {'backend': 'whisper'}}, request=request),
@@ -28,16 +27,20 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
             httpx.ReadTimeout('timeout'),
             httpx.Response(302, headers={'Location': 'https://other.test/'}, request=request),
         ]
-        with patch('integrations.transcription.settings.httpx.AsyncClient', return_value=client) as factory:
+        with patch('integrations.http.create_http_client', return_value=client) as factory:
             for _ in range(4):
                 self.assertEqual(await settings.get_backend(), 'whisper')
-            factory.assert_called_with(timeout=3, follow_redirects=False)
+            factory.assert_called_once_with()
+        self.assertEqual(client.get.call_args.kwargs['timeout'], 3)
+        self.assertFalse(client.get.call_args.kwargs['follow_redirects'])
+        await settings.aclose()
+        client.aclose.assert_awaited_once()
         self.assertEqual(client.get.call_args.kwargs['headers']['Authentication'], 'test-token')
 
     async def test_disabled_endpoint_uses_environment(self):
         cfg = self.config()
         cfg.CALL_TRANSCRIBE_SETTINGS_URL = ''
-        with patch('integrations.transcription.settings.httpx.AsyncClient') as client:
+        with patch('integrations.http.create_http_client') as client:
             self.assertEqual(await TranscriptionSettingsClient(cfg).get_backend(), 'gigaam')
             client.assert_not_called()
 

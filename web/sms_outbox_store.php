@@ -103,10 +103,15 @@ function sms_outbox_heartbeat(array $data): array
         $seen[$port['port']] = true;
     }
     return sms_outbox_transaction(static function (array &$store) use ($ports, $data): array {
-        $store['ports'] = array_map(static fn(array $p): array => ['port'=>$p['port'], 'number'=>$p['number']], $ports);
+        $newPorts = array_map(static fn(array $p): array => ['port'=>$p['port'], 'number'=>$p['number']], $ports);
+        if ($store['ports'] !== $newPorts || $store['connected'] !== $data['connected'] || $store['worker_seen'] <= time()-15) {
+            $store['worker_seen'] = time();
+        }
+        $store['ports'] = $newPorts;
         $store['connected'] = $data['connected'];
-        $store['worker_seen'] = time();
-        return ['ok'=>true];
+        $pending = false;
+        foreach ($store['jobs'] as $job) if ($job['status'] === 'queued') { $pending = true; break; }
+        return ['ok'=>true, 'has_pending'=>$pending];
     });
 }
 

@@ -1,8 +1,9 @@
-import httpx
+from integrations.http import HostingHttpClient
 
 
-class SmsOutboxClient:
-    def __init__(self, config):
+class SmsOutboxClient(HostingHttpClient):
+    def __init__(self, config, http_client=None):
+        super().__init__(http_client)
         self.url = config.SMS_OUTBOX_URL
         self.token = config.EVENT_STORE_AUTH_TOKEN
 
@@ -13,12 +14,11 @@ class SmsOutboxClient:
     async def request(self, action=None, **payload):
         if not self.enabled:
             raise RuntimeError('Отправка СМС не настроена.')
-        async with httpx.AsyncClient(timeout=15) as client:
-            headers = {'Authentication': self.token, 'Accept': 'application/json'}
-            if action:
-                response = await client.post(self.url, headers=headers, json={'action': action, **payload})
-            else:
-                response = await client.get(self.url, headers=headers)
+        headers = {'Authentication': self.token, 'Accept': 'application/json'}
+        if action:
+            response = await self.http.post(self.url, headers=headers, json={'action': action, **payload}, timeout=15)
+        else:
+            response = await self.http.get(self.url, headers=headers, timeout=15)
         try:
             body = response.json()
         except ValueError:
