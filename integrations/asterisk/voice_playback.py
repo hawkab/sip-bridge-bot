@@ -1,48 +1,139 @@
 #!/usr/bin/env python3
-"""Run by Asterisk AGI after the recipient answers; no bot configuration needed."""
+"""Wait for GSM audio readiness before playing an answered call's message."""
 import json
+import math
 import os
 from pathlib import Path
 import re
 import signal
 import sys
 import time
+import wave
+
+READY_TIMEOUT = 45
+# Longer than the silent gap between Russian GSM ringback bursts.
+QUIET_TIMEOUT = 6
 
 
-def command(text):
-    print(text, flush=True)
-    response = sys.stdin.readline()
-    match = re.search(r'200 result=(-?\d+)', response)
-    if not match:
-        raise EOFError('Asterisk channel closed')
-    return int(match[1])
+class AGI:
+    def __init__(self):
+        self.started = time.monotonic()
+        self.metadata = {}
+        self.trace = []
+        for line in sys.stdin:
+            if line in ('\n', '\r\n'):
+                break
+            key, _, value = line.rstrip().partition(': ')
+            self.metadata[key] = value
+
+    def command(self, text):
+        print(text, flush=True)
+        response = sys.stdin.readline().rstrip()
+        self.trace.append({'seconds': round(time.monotonic()-self.started, 3),
+                           'command': text, 'response': response})
+        match = re.fullmatch(r'200 result=(-?\d+)(?: \((.*)\))?(?: endpos=(\d+))?', response)
+        if not match:
+            raise EOFError('Asterisk did not return a valid AGI response')
+        code = int(match[1])
+        if code < 0:
+            raise EOFError('Asterisk channel closed or application failed')
+        return code, match[2], int(match[3]) if match[3] else None
+
+    def variable(self, name):
+        code, value, _ = self.command(f'GET FULL VARIABLE "${{{name}}}"')
+        if code != 1 or value is None:
+            raise ValueError(f'Asterisk variable unavailable: {name}')
+        return value
+
+    def wait(self, app, milliseconds, seconds):
+        self.command('SET VARIABLE WAITSTATUS ""')
+        self.command(f'EXEC {app} "{milliseconds},1,{seconds}"')
+        status = self.variable('WAITSTATUS')
+        if status not in ('NOISE', 'SILENCE', 'TIMEOUT'):
+            raise EOFError(f'{app}: {status}')
+        return status
+
+
+def await_audio(agi):
+    """Don't mistake post-answer ringback, or its silent gaps, for readiness."""
+    deadline = time.monotonic()+READY_TIMEOUT
+    # ToneScan has no Russian progress zone. Use the actual 450 Hz GSM tone,
+    # receive direction only, without suppressing the audio or changing routes.
+    agi.command('SET VARIABLE TONE_DETECT(450,350,r) ""')
+    hits = int(agi.variable('TONE_DETECT(rx)'))
+    pjsip = agi.metadata.get('agi_channel', '').startswith('PJSIP/')
+    while time.monotonic() < deadline:
+        remaining = deadline-time.monotonic()
+        if remaining <= 0:
+            break
+        window = min(QUIET_TIMEOUT, math.ceil(remaining))
+        rx_before = int(agi.variable('CHANNEL(rtcp,rxcount)')) if pjsip else None
+        noise = agi.wait('WaitForNoise', 200, window)
+        if noise == 'NOISE':
+            remaining = deadline-time.monotonic()
+            if remaining <= 0:
+                break
+            silence = agi.wait('WaitForSilence', 700, min(5, math.ceil(remaining)))
+        else:
+            silence = 'SILENCE'
+        current = int(agi.variable('TONE_DETECT(rx)'))
+        if current > hits or silence != 'SILENCE':
+            hits = current
+            continue
+        # A short final timeout, or absent inbound RTP, cannot establish quiet.
+        # Noise requires actual audio frames; digital silence alone does not.
+        if noise == 'TIMEOUT':
+            if window < QUIET_TIMEOUT:
+                break
+            if pjsip and int(agi.variable('CHANNEL(rtcp,rxcount)')) <= rx_before:
+                continue
+        agi.command('SET VARIABLE TONE_DETECT(0,,x) ""')
+        return 'greeting_finished' if noise == 'NOISE' else 'quiet_audio'
+    return None
 
 
 def play(directory):
-    # AGI stdin starts with channel metadata terminated by an empty line.
-    while True:
-        line = sys.stdin.readline()
-        if not line or line in ('\n', '\r\n'):
-            break
-    result = {'status': 'interrupted', 'message': 'Абонент ответил, но воспроизведение прервано.'}
+    agi = AGI()
+    result = {'status': 'interrupted', 'message': 'Соединение или воспроизведение прервано.'}
+    details = {'channel': agi.metadata.get('agi_channel'),
+               'uniqueid': agi.metadata.get('agi_uniqueid'), 'trace': agi.trace}
     try:
-        time.sleep(1)
-        code = command(f'STREAM FILE "{directory / "message"}" ""')
-        if code == 0:
-            result = {'status': 'completed', 'message': 'Абонент ответил; запись воспроизведена полностью.'}
-    except (EOFError, BrokenPipeError, OSError):
-        pass
+        with wave.open(str(directory/'message.wav'), 'rb') as wav:
+            frames = wav.getnframes()
+        state, _, _ = agi.command('CHANNEL STATUS')
+        if state != 6:
+            raise EOFError('Channel is not answered')
+        if agi.metadata.get('agi_channel', '').startswith('PJSIP/'):
+            details['sip_call_id'] = agi.variable('CHANNEL(pjsip,call-id)')
+        readiness = await_audio(agi)
+        details['readiness'] = readiness
+        if readiness is None:
+            result = {'status': 'unknown', 'message':
+                      'Шлюз сообщил об ответе, но готовность звукового канала не подтверждена. Запись не воспроизводилась.'}
+        else:
+            code, _, endpos = agi.command(f'STREAM FILE "{directory / "message"}" ""')
+            playback = agi.variable('PLAYBACKSTATUS')
+            details.update(expected_samples=frames, endpos=endpos, playback_status=playback)
+            if code == 0 and playback == 'SUCCESS' and endpos is not None and endpos >= frames:
+                result = {'status': 'completed', 'message':
+                          'Запись полностью передана в отвеченный канал. Прослушивание получателем не подтверждается.'}
+                # Let the final audio frames leave the channel before hanging up.
+                agi.command('EXEC Wait "1"')
+    except (EOFError, BrokenPipeError, OSError, ValueError, wave.Error) as exc:
+        details['error'] = str(exc)
     finally:
+        details['elapsed_seconds'] = round(time.monotonic()-agi.started, 3)
+        result['diagnostics'] = details
         temporary = directory/'result.tmp'
         with temporary.open('w') as stream:
             json.dump(result, stream, ensure_ascii=False)
-            stream.flush(); os.fsync(stream.fileno())
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(temporary, directory/'result.json')
 
 
 if __name__ == '__main__':
-    # Asterisk sends SIGHUP on hangup. Keep the process alive long enough to
-    # persist the interrupted result; STREAM FILE itself returns -1 / EOF.
+    # Persist a result even when Asterisk sends SIGHUP on hangup.
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     path = Path(sys.argv[1]).resolve()
     if not re.fullmatch(r'[a-f0-9]{32}', path.name) or not (path/'job.json').is_file():

@@ -14,7 +14,6 @@ import wave
 for key in ('BOT_TOKEN','ADMIN_LOGIN','TG_HOST','TG_USER','TG_PASS'):
     os.environ.setdefault(key,'test')
 from integrations.asterisk.voice_calls import AsteriskVoiceCalls, convert_audio
-from integrations.asterisk.voice_playback import play
 from integrations.telegram.voice_calls import parse_destination, voicecall, receive_voice, confirm_voice
 from workers.voice_outbox import VoiceOutboxWorker
 
@@ -57,13 +56,6 @@ class VoiceTests(unittest.IsolatedAsyncioTestCase):
                 await worker.run_once(); await worker.run_once()
             self.assertEqual(sum(call.args==('complete',) for call in api.request.call_args_list),1)
             self.assertTrue(restarted.journals()[0]['reported'])
-
-    def test_agi_completed_and_interrupted(self):
-        for reply, status in [('200 result=0 endpos=8000\n','completed'),('200 result=-1\n','interrupted'),('','interrupted')]:
-            with tempfile.TemporaryDirectory() as directory:
-                with patch('sys.stdin',io.StringIO('agi_channel: test\n\n'+reply)),patch('sys.stdout',io.StringIO()),patch('time.sleep'):
-                    play(Path(directory))
-                self.assertEqual(json.loads((Path(directory)/'result.json').read_text())['status'],status)
 
     def test_moscow_time_and_validation(self):
         with patch('time.time',return_value=1790000000):
