@@ -32,15 +32,23 @@ try {
     check(count($chat['messages']) === 2 && in_array('First SIM', array_column($chat['messages'], 'text'), true), 'Incoming and outgoing together; isolate SIMs');
     check(count(sms_chat(['id'=>'two'])['messages']) === 1, 'Second SIM has independent history');
     check(count(sms_chat(['sender'=>'1','number'=>'+79991111111'])['messages']) === 2, 'New compose opens the same conversation');
-    check(!sms_chat(['id'=>'legacy'])['can_reply'] && count(sms_chat(['id'=>'legacy'])['messages']) === 1, 'Never guess legacy SIM');
+    check(!sms_chat(['id'=>'legacy'])['can_reply'] && sms_chat(['id'=>'legacy'])['sender_selectable'] && count(sms_chat(['id'=>'legacy'])['messages']) === 1, 'Require explicit choice for legacy SIM');
+    check(!sms_chat(['id'=>'one'])['sender_selectable'], 'Known receiving SIM stays locked');
+    $legacy = sms_chat(['id'=>'legacy','sender'=>'2']);
+    check($legacy['can_reply'] && $legacy['sim_port'] === 2 && $legacy['sender_selectable'], 'Select reply SIM manually');
+    check(!isset(find_record_by_id(SMS_JSON_PATH,'legacy')['local_number']), 'Manual reply does not rewrite receiving SIM');
     check(!sms_chat(['id'=>'alpha'])['can_reply'], 'Alphanumeric sender cannot receive reply');
     check(sms_reply_payload($request + ['reply_to'=>'one'])['number'] === '+79991111111', 'Canonical reply');
     invalid(fn()=>sms_reply_payload(array_replace($request,['sender'=>'2','reply_to'=>'one'])));
     invalid(fn()=>sms_reply_payload(array_replace($request,['number'=>'+79992222222','reply_to'=>'one'])));
-    invalid(fn()=>sms_reply_payload($request + ['reply_to'=>'legacy']));
+    check(sms_reply_payload($request + ['reply_to'=>'legacy'])['sender'] === '1', 'Reply from manually selected SIM');
+    invalid(fn()=>sms_reply_payload(array_replace($request,['sender'=>'','reply_to'=>'legacy'])));
+    invalid(fn()=>sms_reply_payload(array_replace($request,['sender'=>'9','reply_to'=>'legacy'])));
+    invalid(fn()=>sms_reply_payload(array_replace($request,['number'=>'+79992222222','reply_to'=>'legacy'])));
     sms_outbox_heartbeat(['connected'=>true,'ports'=>[['port'=>1,'number'=>'+79990000009'],['port'=>2,'number'=>'+79990000001']]]);
     check(sms_chat(['id'=>'one'])['sim_port'] === 2, 'Follow number after SIM moves ports');
     invalid(fn()=>sms_reply_payload($request + ['reply_to'=>'one']));
+    check(sms_chat(['id'=>'two','sender'=>'1'])['sim_port'] === 1, 'Allow explicit replacement when receiving SIM disconnected');
     echo "PASS: two-SIM chats, replies, number normalization, legacy records, changed SIM and route tampering\n";
 } finally {
     foreach (glob($root . '/*') as $file) unlink($file);

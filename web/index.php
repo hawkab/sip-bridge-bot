@@ -415,6 +415,12 @@ $appConfig = [
         .pointer {
             cursor: pointer;
         }
+        .search-field { position: relative; flex: 1 1 200px; max-width: 320px; }
+        .search-field input { padding-right: 2.5rem; }
+        .search-clear { position: absolute; right: .2rem; top: 50%; transform: translateY(-50%);
+            border: 0; background: transparent; color: #dc3545; font-size: 1.6rem; line-height: 1; padding: .25rem .5rem; }
+        .search-clear:hover { color: #a71d2a; }
+        .search-clear:focus-visible { outline: 2px solid #dc3545; border-radius: .25rem; }
         .phone-link,
         .sortable-header {
             color: #0d6efd;
@@ -558,11 +564,11 @@ $appConfig = [
     const state = {
         authenticated: <?= $isAuthenticated ? 'true' : 'false' ?>,
         activeMenu: 'calls',
-        outbox: {contextId:'', chatReady:false, canReply:false, messages:[], ports:[], jobs:[], connected:false, csrfToken:'', sending:false, error:'', message:'', draft:readSmsDraft() || newSmsDraft()},
+        outbox: {contextId:'', chatEpoch:0, chatReady:false, canReply:false, senderSelectable:false, messages:[], ports:[], jobs:[], connected:false, csrfToken:'', sending:false, error:'', message:'', draft:readSmsDraft() || newSmsDraft()},
         deleting: false,
         listEpoch: 0,
         deletionCsrf: '',
-        settings: { backend: 'gigaam', csrfToken: '', loading: true, saving: false, error: '', message: '' },
+        settings: { backend: 'gigaam', savedBackend: null, csrfToken: '', loading: true, saving: false, error: '', message: '' },
         calls: {
             items: [],
             selected: new Set(),
@@ -604,6 +610,20 @@ $appConfig = [
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
+    }
+
+    function formatDuration(value, compact = false) {
+        if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) || Number(value) < 0) return '—';
+        const total = Math.floor(Number(value));
+        const parts = [Math.floor(total / 3600), Math.floor(total / 60) % 60, total % 60];
+        const forms = [['час', 'часа', 'часов'], ['минута', 'минуты', 'минут'], ['секунда', 'секунды', 'секунд']];
+        const short = ['ч.', 'мин.', 'сек.'];
+        return parts.map((count, i) => {
+            if (!count && (i !== 2 || total !== 0)) return '';
+            const ten = count % 10, hundred = count % 100;
+            const form = hundred >= 11 && hundred <= 14 ? 2 : ten === 1 ? 0 : ten >= 2 && ten <= 4 ? 1 : 2;
+            return `${count} ${compact ? short[i] : forms[i][form]}`;
+        }).filter(Boolean).join(' ');
     }
 
     function getSortIndicator(sortBy, sortDirection, column) {
@@ -855,7 +875,7 @@ $appConfig = [
                             <dt class="col-sm-3">Тип</dt><dd class="col-sm-9">${escapeHtml(item.type || '')}</dd>
                             <dt class="col-sm-3">Номер</dt><dd class="col-sm-9"><span class="phone-link" data-phone="${escapeHtml(item.number || '')}">${escapeHtml(item.number || '')}</span></dd>
                             <dt class="col-sm-3">${item.type === 'входящий' ? 'На какой номер' : 'С какого номера'}</dt><dd class="col-sm-9">${escapeHtml(item.local_number || 'Номер не сохранён')}${item.sim_port ? ` · SIM ${escapeHtml(item.sim_port)}` : ''}</dd>
-                            <dt class="col-sm-3">Длительность</dt><dd class="col-sm-9">${escapeHtml(String(item.duration ?? ''))} сек.</dd>
+                            <dt class="col-sm-3">Длительность</dt><dd class="col-sm-9">${formatDuration(item.duration)}</dd>
                             <dt class="col-sm-3">Запись</dt>
                             <dd class="col-sm-9">
                                 ${item.hasRecording && item.downloadUrl
@@ -963,7 +983,7 @@ $appConfig = [
             const button = app.querySelector(`[data-delete-selected="${target}"]`);
             if (button) {
                 button.disabled = state.deleting || source.selected.size === 0;
-                button.textContent = state.deleting ? 'Удаление…' : `Удалить выбранные (${source.selected.size})`;
+                button.textContent = state.deleting ? 'Удаление…' : `Удалить (${source.selected.size})`;
             }
         }
     }
@@ -1022,7 +1042,7 @@ $appConfig = [
                 <td><span class="phone-link" data-detail-view="call" data-detail-id="${escapeHtml(item.id || '')}">${escapeHtml(item.displayTimestamp || item.timestamp || '')}</span></td>
                 <td>${escapeHtml(item.type || '') === 'входящий' ? '<img class="red" src="icons/income_call.png" title="Входящий"x/>' : '<img class="green" src="icons/outcome_call.png" title="Исходящий"/>'}</td>
                 <td><span class="phone-link" data-phone="${escapeHtml(item.number || '')}">${escapeHtml(item.number || '')}</span></td>
-                <td>${escapeHtml(String(item.duration ?? ''))} сек.</td>
+                <td>${formatDuration(item.duration, true)}</td>
             </tr>
         `).join('');
 
@@ -1173,11 +1193,13 @@ $appConfig = [
         const source = state[target];
         return `
             <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-                <input id="${target}Search" class="form-control" style="max-width: 320px;" placeholder="Поиск по номеру" value="${escapeHtml(source.search)}">
+                <div class="search-field">
+                    <input id="${target}Search" class="form-control" placeholder="Поиск по номеру" value="${escapeHtml(source.search)}">
+                    <button id="${target}ClearBtn" class="search-clear" type="button" aria-label="Очистить поиск" title="Сбросить фильтр"><span aria-hidden="true">×</span></button>
+                </div>
                 <button id="${target}SearchBtn" class="btn btn-outline-secondary" type="button">Найти</button>
-                <button id="${target}ClearBtn" class="btn btn-outline-secondary" type="button">Сбросить</button>
                 <button data-compose="${target === 'sms' ? 'send_sms' : 'voice_calls'}" class="btn btn-primary" type="button">${target === 'sms' ? 'Новая СМС' : 'Голосовой вызов'}</button>
-                <button data-delete-selected="${target}" class="btn btn-outline-danger" type="button" disabled>Удалить выбранные (0)</button>
+                <button data-delete-selected="${target}" class="btn btn-outline-danger" type="button" disabled>Удалить (0)</button>
                 <button id="${target}ReloadBtn" class="btn btn-outline-secondary ms-auto" type="button">Обновить</button>
             </div>
         `;
@@ -1276,10 +1298,6 @@ $appConfig = [
                 }
                 renderShell(); await loadCurrentMenu(); refreshMainArea(); return;
             }
-            if (event.target.closest('#changeSmsRecipient')) {
-                syncSmsDraft(); state.outbox.chatReady = false; state.outbox.messages = [];
-                state.outbox.error = ''; state.outbox.message = ''; refreshMainArea(); return;
-            }
             if (state.deleting) return;
             const deleteButton = event.target.closest('[data-delete-selected]');
             if (deleteButton) {
@@ -1288,7 +1306,7 @@ $appConfig = [
             }
             if (event.target.closest('#saveTranscriptionSettings')) {
                 const selected = document.getElementById('transcriptionBackend');
-                if (!selected || state.settings.saving) return;
+                if (!selected || !canSaveSettings()) return;
                 state.settings.backend = selected.value;
                 state.settings.saving = true;
                 state.settings.error = '';
@@ -1299,6 +1317,7 @@ $appConfig = [
                         backend: state.settings.backend, csrf_token: state.settings.csrfToken,
                     });
                     state.settings.backend = response.settings.backend;
+                    state.settings.savedBackend = response.settings.backend;
                     state.settings.message = 'Сохранено. Выбранный движок будет использоваться для следующих записей.';
                 } catch (error) {
                     state.settings.error = error.message;
@@ -1427,6 +1446,19 @@ $appConfig = [
         });
 
         app.addEventListener('change', async (event) => {
+            if (event.target.id === 'transcriptionBackend') {
+                state.settings.backend = event.target.value;
+                state.settings.error = ''; state.settings.message = '';
+                refreshMainArea(); return;
+            }
+            if (event.target.id === 'smsSender' && state.detailView === 'sms' && state.outbox.senderSelectable) {
+                syncSmsDraft(); state.outbox.canReply = false;
+                state.outbox.error = ''; state.outbox.message = '';
+                const id = state.detailItem.id;
+                try { await loadSmsChat(id); } catch (error) { state.outbox.error = error.message; }
+                if (state.detailView === 'sms' && state.detailItem.id === id) refreshMainArea();
+                return;
+            }
             if (event.target.closest('#smsComposeForm')) { syncSmsDraft(); return; }
             if (state.deleting) return;
             const checkbox = event.target.closest('[data-select-target], [data-select-all]');
@@ -1583,18 +1615,17 @@ $appConfig = [
         const s = state.outbox, d = s.draft;
         const card = state.detailView === 'sms';
         const locked = card || s.chatReady;
+        const senderLocked = locked && !s.senderSelectable;
         const disabled = s.sending ? 'disabled' : '';
-        const item = card ? state.detailItem : null;
         const unavailable = locked && !s.canReply;
+        const needsSender = card && s.senderSelectable && !d.sender;
         return `<section class="card shadow-sm sms-composer"><div class="card-body p-3 p-md-4">
             <h2 class="h5">${card ? 'Переписка по СМС' : 'Новая СМС'}</h2>
-            ${card ? `<p class="small text-secondary">На какой номер: <strong>${escapeHtml(item.local_number || 'Номер не сохранён')}</strong></p>` : ''}
-            <p class="small text-secondary" id="smsGatewayStatus">${s.connected ? 'Шлюз подключён' : 'Ожидание подключения шлюза. Сообщения сохраняются в очереди.'}</p>
             <form id="smsComposeForm">
                 <div class="row g-3 mb-3">
                     <div class="col-sm-5"><label class="form-label" for="smsSender">SIM отправителя</label>
-                    <select class="form-select" id="smsSender" name="sender" required ${locked ? 'disabled' : disabled}>
-                        <option value="">${card ? 'SIM не определена' : 'Выберите SIM'}</option>
+                    <select class="form-select" id="smsSender" name="sender" required ${senderLocked ? 'disabled' : disabled}>
+                        <option value="">Выберите SIM</option>
                         ${s.ports.map(p=>`<option value="${p.port}" ${String(p.port) === String(d.sender) ? 'selected' : ''}>SIM ${p.port} · ${escapeHtml(p.number)}</option>`).join('')}
                     </select></div>
                     <div class="col-sm-7"><label class="form-label" for="smsRecipient">Номер получателя</label>
@@ -1602,14 +1633,13 @@ $appConfig = [
                 </div>
                 ${!locked ? '<p class="text-secondary">Выберите SIM и номер получателя, чтобы открыть переписку.</p>' : ''}
                 ${locked ? `<div id="smsChatMessages" class="sms-chat" aria-label="Сообщения">${renderSmsMessages()}</div>` : ''}
-                ${unavailable ? '<p class="alert alert-warning mt-3">Ответ недоступен: принимающая SIM не сохранена, больше не подключена либо отправитель использует текстовое имя. Для отправки создайте новую СМС из списка.</p>' : ''}
+                ${unavailable ? `<p class="alert alert-warning mt-3">${needsSender ? 'Выберите номер отправителя для ответа.' : 'Ответ недоступен: SIM не подключена или отправитель использует текстовое имя.'}</p>` : ''}
                 ${locked && !unavailable ? `<label class="form-label mt-3" for="smsMessage">Сообщение</label>
                     <textarea class="form-control" id="smsMessage" name="text" rows="3" placeholder="Введите сообщение…" required ${disabled}>${escapeHtml(d.text)}</textarea>
-                    <div class="d-flex justify-content-between gap-2 small text-secondary mt-1 mb-3"><span>Длинный текст может уйти несколькими СМС.</span><span id="smsByteCount">${new TextEncoder().encode(d.text).length} / 1024 байт</span></div>` : ''}
+                    <div class="small text-secondary text-end mt-1 mb-3"><span id="smsByteCount">${new TextEncoder().encode(d.text).length} / 1024 байт</span></div>` : ''}
                 ${s.error ? `<div class="alert alert-danger" role="alert">${escapeHtml(s.error)}</div>` : ''}
                 ${s.message ? `<div class="small text-success my-2" role="status">${escapeHtml(s.message)}</div>` : ''}
                 ${!unavailable ? `<button class="btn btn-primary" type="submit" ${s.sending || !s.csrfToken || !s.ports.length ? 'disabled' : ''}>${s.sending ? 'Сохранение…' : locked ? 'Отправить' : 'Открыть чат'}</button>` : ''}
-                ${s.chatReady && !card ? `<button class="btn btn-outline-secondary ms-2" type="button" id="changeSmsRecipient" ${disabled}>Другой получатель</button>` : ''}
             </form>
         </div></section>`;
     }
@@ -1619,9 +1649,11 @@ $appConfig = [
     }
     async function loadSmsChat(id = '') {
         const s = state.outbox;
-        const query = id ? {id} : {sender:s.draft.sender, number:s.draft.number};
+        const query = id ? {id, sender:s.contextId === id && s.senderSelectable ? s.draft.sender : ''} : {sender:s.draft.sender, number:s.draft.number};
         const contextKey = id || `${query.sender}:${query.number}`;
+        const epoch = ++s.chatEpoch;
         const response = await apiGet('get_sms_chat', query);
+        if (epoch !== s.chatEpoch) return;
         if (id && (state.detailView !== 'sms' || state.detailItem?.id !== id)) return;
         if (!id && (state.activeMenu !== 'send_sms' || `${s.draft.sender}:${s.draft.number}` !== contextKey)) return;
         if (s.contextId !== contextKey) {
@@ -1630,7 +1662,7 @@ $appConfig = [
         }
         s.draft.sender = String(response.sim_port || ''); s.draft.number = response.number;
         Object.assign(s, {messages:response.messages, ports:response.ports, connected:response.connected,
-            csrfToken:response.csrf_token, canReply:response.can_reply, chatReady:true});
+            csrfToken:response.csrf_token, canReply:response.can_reply, senderSelectable:response.sender_selectable, chatReady:true});
         saveSmsDraft();
     }
     async function submitSms(event) {
@@ -1660,6 +1692,11 @@ $appConfig = [
         finally { s.sending = false; if (state.activeMenu === 'send_sms' || state.detailView === 'sms') refreshMainArea(); }
     }
 
+    function canSaveSettings() {
+        const s = state.settings;
+        return !s.loading && !s.saving && !!s.csrfToken && s.backend !== s.savedBackend;
+    }
+
     function renderSettings() {
         const s = state.settings;
         return `<section class="card border-0 shadow-sm" style="max-width: 720px;">
@@ -1676,7 +1713,7 @@ $appConfig = [
                 ${s.error ? `<div class="alert alert-danger" role="alert">${escapeHtml(s.error)}</div>` : ''}
                 ${s.message ? `<div class="alert alert-success" role="status">${escapeHtml(s.message)}</div>` : ''}
                 <div class="d-flex gap-2">
-                    <button id="saveTranscriptionSettings" class="btn btn-primary" type="button" ${s.loading || s.saving || !s.csrfToken ? 'disabled' : ''}>${s.saving ? 'Сохранение…' : 'Сохранить'}</button>
+                    <button id="saveTranscriptionSettings" class="btn btn-primary" type="button" ${canSaveSettings() ? '' : 'disabled'}>${s.saving ? 'Сохранение…' : 'Сохранить'}</button>
                 </div>
             </div>
         </section>`;
@@ -1691,6 +1728,7 @@ $appConfig = [
         try {
             const response = await apiGet('get_transcription_settings');
             state.settings.backend = response.settings.backend;
+            state.settings.savedBackend = response.settings.backend;
             state.settings.csrfToken = response.csrf_token;
         } catch (error) {
             state.settings.error = error.message;
@@ -1832,8 +1870,12 @@ async function pollUpdates() {
         if (state.activeMenu === 'settings') return;
         if (state.activeMenu === 'voice_calls') { await SipVoiceCalls.poll(); return; }
         if (state.activeMenu === 'send_sms' || state.detailView === 'sms') {
+            const beforeContext = JSON.stringify([state.outbox.draft.sender, state.outbox.canReply, state.outbox.senderSelectable, state.outbox.ports]);
             if (state.outbox.chatReady || state.detailView === 'sms') await loadSmsChat(state.detailView === 'sms' ? state.detailItem.id : '');
             else await loadSmsOutbox();
+            if (beforeContext !== JSON.stringify([state.outbox.draft.sender, state.outbox.canReply, state.outbox.senderSelectable, state.outbox.ports])) {
+                refreshMainArea(); return;
+            }
             const history = document.getElementById('smsChatMessages');
             if (history) {
                 const html = renderSmsMessages();
@@ -1844,8 +1886,6 @@ async function pollUpdates() {
                     history.scrollTop = nearEnd ? history.scrollHeight : position;
                 }
             }
-            const status = document.getElementById('smsGatewayStatus');
-            if (status) status.textContent = state.outbox.connected ? 'Шлюз подключён' : 'Ожидание подключения шлюза. Сообщения сохраняются в очереди.';
             return;
         }
 

@@ -16,6 +16,7 @@ function sms_chat_context(array $query): array
 {
     $state = sms_outbox_state();
     $item = null;
+    $senderSelectable = false;
     if (!empty($query['id'])) {
         $item = find_record_by_id(SMS_JSON_PATH, (string) $query['id']);
         if ($item === null) throw new InvalidArgumentException('СМС не найдена.');
@@ -25,6 +26,15 @@ function sms_chat_context(array $query): array
         foreach ($state['ports'] as $candidate) {
             // A port may contain a different SIM now. Never silently reply from it.
             if ($local !== '' && sms_chat_number($candidate['number']) === $local) $port = $candidate;
+        }
+        $senderSelectable = $port === null;
+        if ($senderSelectable && (string) ($query['sender'] ?? '') !== '') {
+            foreach ($state['ports'] as $candidate) {
+                if ((string) $candidate['port'] === (string) $query['sender']) $port = $candidate;
+            }
+            if ($port === null) throw new InvalidArgumentException('Выбранная SIM недоступна.');
+            // Select the reply sender without inventing the original receiving SIM.
+            $local = (string) $port['number'];
         }
     } else {
         $number = sms_chat_number((string) ($query['number'] ?? ''));
@@ -38,6 +48,7 @@ function sms_chat_context(array $query): array
         $local = (string) $port['number'];
     }
     return ['number'=>$number, 'local_number'=>$local, 'sim_port'=>$port['port'] ?? null,
+        'sender_selectable'=>$senderSelectable,
         'can_reply'=>$port !== null && preg_match('/^\+[1-9][0-9]{6,14}$/D', $number) === 1,
         'item'=>$item, 'ports'=>$state['ports'], 'connected'=>$state['connected']];
 }
@@ -74,8 +85,8 @@ function sms_reply_payload(array $data): array
 {
     if (empty($data['reply_to'])) return $data;
     if (!is_string($data['reply_to'])) throw new InvalidArgumentException('Некорректная карточка СМС.');
-    $context = sms_chat_context(['id'=>$data['reply_to']]);
-    if (!$context['can_reply']) throw new InvalidArgumentException('Неизвестна принимающая SIM или отправитель не принимает ответы. Создайте новую СМС и выберите получателя.');
+    $context = sms_chat_context(['id'=>$data['reply_to'], 'sender'=>$data['sender'] ?? '']);
+    if (!$context['can_reply']) throw new InvalidArgumentException('Выберите SIM для ответа. Ответ на текстовое имя отправителя недоступен.');
     if ((string) ($data['sender'] ?? '') !== (string) $context['sim_port']
         || sms_chat_number((string) ($data['number'] ?? '')) !== $context['number']) {
         throw new InvalidArgumentException('SIM и получатель ответа должны совпадать с карточкой СМС.');

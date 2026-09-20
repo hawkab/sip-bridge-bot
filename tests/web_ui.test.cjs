@@ -118,3 +118,55 @@ test('selection survives pagination and is pruned only when IDs disappear from t
   context.applyListState('calls',{items:[{id:'two'}],all_ids:['two','three'],meta:{page:2}});
   assert.deepEqual([...state.calls.selected],['two']);
 });
+
+test('call durations omit empty units and use Russian plurals', () => {
+  const index = source('index.php');
+  const context = {}; vm.createContext(context);
+  vm.runInContext(index.slice(index.indexOf('    function formatDuration('), index.indexOf('    function getSortIndicator(')), context);
+  for (const [seconds, full, compact] of [
+    [3602,'1 час 2 секунды','1 ч. 2 сек.'], [135,'2 минуты 15 секунд','2 мин. 15 сек.'],
+    [60,'1 минута','1 мин.'], [59,'59 секунд','59 сек.'], [663,'11 минут 3 секунды','11 мин. 3 сек.'],
+    [0,'0 секунд','0 сек.'], [3600,'1 час','1 ч.'], [7200,'2 часа','2 ч.'],
+    [18000,'5 часов','5 ч.'], [75600,'21 час','21 ч.'], [1321,'22 минуты 1 секунда','22 мин. 1 сек.'],
+    [11,'11 секунд','11 сек.'], [14,'14 секунд','14 сек.'], [22,'22 секунды','22 сек.'],
+  ]) {
+    assert.equal(context.formatDuration(seconds), full);
+    assert.equal(context.formatDuration(String(seconds), true), compact);
+  }
+  for (const invalid of [null, undefined, '', 'invalid', -1, Infinity]) assert.equal(context.formatDuration(invalid), '—');
+});
+
+test('settings Save follows actual changes and returns to disabled after saving or reverting', () => {
+  const index=source('index.php');
+  const s={backend:'gigaam',savedBackend:null,loading:true,saving:false,csrfToken:''};
+  const context={state:{settings:s},escapeHtml:String}; vm.createContext(context);
+  vm.runInContext(index.slice(index.indexOf('    function canSaveSettings('),index.indexOf('    async function loadSettings(')),context);
+  const disabled=()=>/id="saveTranscriptionSettings"[^>]*\bdisabled/.test(context.renderSettings());
+  assert(disabled());
+  Object.assign(s,{loading:false,csrfToken:'token',savedBackend:'gigaam'}); assert(disabled());
+  s.backend='whisper'; assert(!disabled());
+  s.backend='gigaam'; assert(disabled());
+  s.backend='whisper'; s.saving=true; assert(disabled());
+  s.savedBackend='whisper'; s.saving=false; assert(disabled());
+  s.backend='gigaam'; s.error='Network error'; assert(!disabled());
+});
+
+test('manual SMS sender and draft survive polling; stale SIM response cannot overwrite a newer choice', async () => {
+  const index=source('index.php');
+  const s={contextId:'legacy',chatEpoch:0,senderSelectable:true,draft:{sender:'1',number:'+79991111111',text:'Unsaved message',request_key:'key'}};
+  const pending=[];
+  const context={state:{outbox:s,detailView:'sms',detailItem:{id:'legacy'}},
+    apiGet:(action,query)=>new Promise(resolve=>pending.push({query,resolve})),saveSmsDraft(){}};
+  vm.createContext(context);
+  vm.runInContext(index.slice(index.indexOf('    async function loadSmsChat('),index.indexOf('    async function submitSms(')),context);
+  const old=context.loadSmsChat('legacy');
+  s.draft.sender='2'; const latest=context.loadSmsChat('legacy');
+  assert.equal(pending[0].query.sender,'1'); assert.equal(pending[1].query.sender,'2');
+  const response=port=>({sim_port:port,number:'+79991111111',messages:[],ports:[],connected:true,csrf_token:'csrf',can_reply:true,sender_selectable:true});
+  pending[1].resolve(response(2)); await latest;
+  pending[0].resolve(response(1)); await old;
+  assert.equal(s.draft.sender,'2'); assert.equal(s.draft.text,'Unsaved message'); assert.equal(s.canReply,true);
+  const poll=context.loadSmsChat('legacy'); assert.equal(pending[2].query.sender,'2');
+  pending[2].resolve(response(2)); await poll;
+  assert.equal(s.draft.text,'Unsaved message');
+});
