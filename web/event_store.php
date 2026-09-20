@@ -1,23 +1,39 @@
 <?php
 declare(strict_types=1);
 
-function filter_events_by_number(array $items, string $query): array
+function event_transcription_search_text($value): string
 {
+    if (is_string($value)) {
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? event_transcription_search_text($decoded) : $value;
+    }
+    if (!is_array($value)) return '';
+    if (isset($value['conversation'])) return event_transcription_search_text($value['conversation']);
+    $texts = [];
+    foreach ($value as $entry) {
+        if (is_array($entry) && is_string($entry['text'] ?? null)) $texts[] = $entry['text'];
+    }
+    return implode(' ', $texts);
+}
+
+function filter_events(array $items, string $query, string $kind): array
+{
+    if (!in_array($kind, ['calls', 'sms'], true)) throw new InvalidArgumentException('Unknown event kind.');
     $query = trim($query);
     if ($query === '') return $items;
 
     // Strip formatting only from phone queries: letters must not become an
     // empty filter or accidentally match the digits in an unrelated number.
-    if (preg_match('/^[+0-9\s().-]+$/uD', $query)) {
-        $digits = preg_replace('/\D/', '', $query);
-        if ($digits === '') return [];
-        return array_values(array_filter($items, static fn(array $item): bool =>
-            str_contains(preg_replace('/\D/', '', (string) ($item['number'] ?? '')), $digits)));
-    }
-
+    $digits = preg_match('/^[+0-9\s().-]+$/uD', $query) ? preg_replace('/\D/', '', $query) : '';
     $pattern = '/' . preg_quote($query, '/') . '/iu';
-    return array_values(array_filter($items, static fn(array $item): bool =>
-        preg_match($pattern, (string) ($item['number'] ?? '')) === 1));
+    return array_values(array_filter($items, static function(array $item) use ($digits, $pattern, $kind): bool {
+        $number = (string) ($item['number'] ?? '');
+        if (preg_match($pattern, $number) === 1
+            || ($digits !== '' && str_contains(preg_replace('/\D/', '', $number), $digits))) return true;
+        $text = $kind === 'sms' ? (string) ($item['text'] ?? '')
+            : event_transcription_search_text($item['transcription'] ?? []);
+        return preg_match($pattern, $text) === 1;
+    }));
 }
 
 // A stable sidecar lock is shared by ingestion and deletion. Locking the JSON

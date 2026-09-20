@@ -204,7 +204,7 @@ if ($action !== '') {
         case 'list_calls':
             $items = read_json_array(CALLS_JSON_PATH);
             $allIds = array_column($items, 'id');
-            $items = filter_events_by_number($items, (string) ($_GET['number'] ?? ''));
+            $items = filter_events($items, (string) ($_GET['number'] ?? ''), 'calls');
             $items = sort_items(
                 $items,
                 (string) ($_GET['sortBy'] ?? 'timestamp'),
@@ -238,7 +238,7 @@ if ($action !== '') {
         case 'list_sms':
             $items = read_json_array(SMS_JSON_PATH);
             $allIds = array_column($items, 'id');
-            $items = filter_events_by_number($items, (string) ($_GET['number'] ?? ''));
+            $items = filter_events($items, (string) ($_GET['number'] ?? ''), 'sms');
             $items = sort_items(
                 $items,
                 (string) ($_GET['sortBy'] ?? 'timestamp'),
@@ -1194,7 +1194,7 @@ $appConfig = [
         return `
             <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
                 <div class="search-field">
-                    <input id="${target}Search" class="form-control" placeholder="Поиск по номеру" value="${escapeHtml(source.search)}">
+                    <input id="${target}Search" class="form-control" placeholder="${target === 'sms' ? 'Поиск по номеру или тексту СМС' : 'Поиск по номеру или транскрибации'}" value="${escapeHtml(source.search)}">
                     <button id="${target}ClearBtn" class="search-clear" type="button" aria-label="Очистить поиск" title="Сбросить фильтр"><span aria-hidden="true">×</span></button>
                 </div>
                 <button id="${target}SearchBtn" class="btn btn-outline-secondary" type="button">Найти</button>
