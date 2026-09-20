@@ -204,7 +204,7 @@ if ($action !== '') {
         case 'list_calls':
             $items = read_json_array(CALLS_JSON_PATH);
             $allIds = array_column($items, 'id');
-            $items = filter_by_number($items, (string) ($_GET['number'] ?? ''));
+            $items = filter_events_by_number($items, (string) ($_GET['number'] ?? ''));
             $items = sort_items(
                 $items,
                 (string) ($_GET['sortBy'] ?? 'timestamp'),
@@ -238,7 +238,7 @@ if ($action !== '') {
         case 'list_sms':
             $items = read_json_array(SMS_JSON_PATH);
             $allIds = array_column($items, 'id');
-            $items = filter_by_number($items, (string) ($_GET['number'] ?? ''));
+            $items = filter_events_by_number($items, (string) ($_GET['number'] ?? ''));
             $items = sort_items(
                 $items,
                 (string) ($_GET['sortBy'] ?? 'timestamp'),
@@ -1607,7 +1607,7 @@ $appConfig = [
     function renderSmsMessages() {
         return state.outbox.messages.map(message => `<article class="sms-bubble ${message.direction === 'outgoing' ? 'sms-outgoing' : 'sms-incoming'}">
             <div class="sms-message-text">${escapeHtml(message.text)}</div>
-            <div class="small text-secondary mt-2">${escapeHtml(message.timestamp)}${message.direction === 'outgoing' ? ` · ${escapeHtml(smsStatusLabel(message.status))}` : ''}</div>
+            <div class="small text-secondary mt-2">${escapeHtml(message.display_timestamp)}${message.direction === 'outgoing' ? ` · ${escapeHtml(smsStatusLabel(message.status))}` : ''}</div>
             ${['failed','unknown'].includes(message.status) ? `<div class="small text-danger">${escapeHtml(message.message || '')}</div>` : ''}
         </article>`).join('') || '<p class="text-secondary text-center my-4">Сообщений пока нет.</p>';
     }

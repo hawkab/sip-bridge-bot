@@ -1,6 +1,25 @@
 <?php
 declare(strict_types=1);
 
+function filter_events_by_number(array $items, string $query): array
+{
+    $query = trim($query);
+    if ($query === '') return $items;
+
+    // Strip formatting only from phone queries: letters must not become an
+    // empty filter or accidentally match the digits in an unrelated number.
+    if (preg_match('/^[+0-9\s().-]+$/uD', $query)) {
+        $digits = preg_replace('/\D/', '', $query);
+        if ($digits === '') return [];
+        return array_values(array_filter($items, static fn(array $item): bool =>
+            str_contains(preg_replace('/\D/', '', (string) ($item['number'] ?? '')), $digits)));
+    }
+
+    $pattern = '/' . preg_quote($query, '/') . '/iu';
+    return array_values(array_filter($items, static fn(array $item): bool =>
+        preg_match($pattern, (string) ($item['number'] ?? '')) === 1));
+}
+
 // A stable sidecar lock is shared by ingestion and deletion. Locking the JSON
 // inode itself is insufficient because each write replaces it with rename().
 function with_event_store_lock(string $path, callable $operation)

@@ -20,14 +20,23 @@ try {
     sms_outbox_heartbeat(['connected'=>true, 'ports'=>[
         ['port'=>1,'number'=>'+79990000001'], ['port'=>2,'number'=>'+79990000002']]]);
     file_put_contents(SMS_JSON_PATH, json_encode([
-        ['id'=>'one','number'=>'89991111111','local_number'=>'+79990000001','sim_port'=>1,'text'=>'First SIM','timestamp'=>'2026-09-20 10:00:00'],
+        ['id'=>'one','number'=>'89991111111','local_number'=>'+79990000001','sim_port'=>1,'text'=>'First SIM','timestamp'=>'2026-09-20 09:34:46'],
         ['id'=>'two','number'=>'+79991111111','local_number'=>'+79990000002','sim_port'=>2,'text'=>'Second SIM','timestamp'=>'2026-09-20 10:00:00'],
         ['id'=>'legacy','number'=>'+79991111111','text'=>'Unknown SIM','timestamp'=>'2026-09-20 10:00:00'],
         ['id'=>'alpha','number'=>'Bank','local_number'=>'+79990000001','text'=>'Service','timestamp'=>'2026-09-20 10:00:00']
     ]));
     $request = ['sender'=>'1','number'=>'+79991111111','text'=>'Answer','request_key'=>'chat-test-request-001'];
     $job = sms_outbox_enqueue($request,'web');
+    sms_outbox_transaction(static function(array &$store) use ($job): array {
+        foreach ($store['jobs'] as &$entry) {
+            if ($entry['id'] === $job['id']) $entry['created_at'] = '2026-09-20T09:34:47+03:00';
+        }
+        return [];
+    });
     $chat = sms_chat(['id'=>'one']);
+    check(array_column($chat['messages'], 'display_timestamp') === ['09:34:46 20.09.2026','09:34:47 20.09.2026'], 'Display naive incoming and ISO outgoing dates consistently, in order');
+    check($chat['messages'][1]['timestamp'] === '2026-09-20T09:34:47+03:00', 'Preserve raw timestamp');
+    check(!isset($chat['messages'][0]['_sort_timestamp']), 'Do not expose internal sort key');
     check($chat['can_reply'] && $chat['sim_port'] === 1, 'Select receiving SIM');
     check(count($chat['messages']) === 2 && in_array('First SIM', array_column($chat['messages'], 'text'), true), 'Incoming and outgoing together; isolate SIMs');
     check(count(sms_chat(['id'=>'two'])['messages']) === 1, 'Second SIM has independent history');
@@ -49,7 +58,15 @@ try {
     check(sms_chat(['id'=>'one'])['sim_port'] === 2, 'Follow number after SIM moves ports');
     invalid(fn()=>sms_reply_payload($request + ['reply_to'=>'one']));
     check(sms_chat(['id'=>'two','sender'=>'1'])['sim_port'] === 1, 'Allow explicit replacement when receiving SIM disconnected');
-    echo "PASS: two-SIM chats, replies, number normalization, legacy records, changed SIM and route tampering\n";
+    $records = read_json_array(SMS_JSON_PATH);
+    foreach (['utc'=>'2026-09-19T22:01:02Z', 'bad'=>'invalid timestamp', 'empty'=>''] as $id=>$timestamp) {
+        $records[] = array_replace($records[0], ['id'=>$id, 'timestamp'=>$timestamp]);
+    }
+    file_put_contents(SMS_JSON_PATH, json_encode($records));
+    $messages = array_column(sms_chat(['id'=>'one'])['messages'], null, 'id');
+    check($messages['in-utc']['display_timestamp'] === '01:01:02 20.09.2026', 'Convert explicit timezone to Moscow, including day boundary');
+    check($messages['in-bad']['display_timestamp'] === '—' && $messages['in-empty']['display_timestamp'] === '—', 'Malformed historical dates do not break chat or become current time');
+    echo "PASS: two-SIM chats, replies, number normalization, legacy records, changed SIM, route tampering and timestamp formatting\n";
 } finally {
     foreach (glob($root . '/*') as $file) unlink($file);
     rmdir($root);

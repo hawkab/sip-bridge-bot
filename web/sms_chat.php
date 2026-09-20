@@ -75,8 +75,23 @@ function sms_chat(array $query): array
             'timestamp'=>$job['created_at'], 'status'=>$job['status'], 'message'=>$job['message']];
     }
     $tz = new DateTimeZone('Europe/Moscow');
-    usort($messages, static fn($a, $b) =>
-        (new DateTimeImmutable($a['timestamp'], $tz))->getTimestamp() <=> (new DateTimeImmutable($b['timestamp'], $tz))->getTimestamp());
+    foreach ($messages as &$message) {
+        $message['display_timestamp'] = '—';
+        $message['_sort_timestamp'] = 0;
+        $timestamp = trim((string) ($message['timestamp'] ?? ''));
+        if ($timestamp === '') continue;
+        try {
+            $date = (new DateTimeImmutable($timestamp, $tz))->setTimezone($tz);
+            $message['display_timestamp'] = $date->format('H:i:s d.m.Y');
+            $message['_sort_timestamp'] = $date->getTimestamp();
+        } catch (Exception $e) {
+            // One malformed historical timestamp must not break the chat.
+        }
+    }
+    unset($message);
+    usort($messages, static fn($a, $b) => $a['_sort_timestamp'] <=> $b['_sort_timestamp']);
+    foreach ($messages as &$message) unset($message['_sort_timestamp']);
+    unset($message);
     unset($context['item']);
     return $context + ['messages'=>$messages];
 }
