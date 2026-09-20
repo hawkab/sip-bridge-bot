@@ -55,6 +55,7 @@ class EventStoreClient(HostingHttpClient):
         recording_name: str | None = None,
         transcription: list[dict[str, Any]] | None = None,
         transcription_channels: dict | None = None,
+        source_id: str = '',
     ) -> CallStoreResult:
         if not self.is_call_enabled():
             return CallStoreResult(ok=False, error_message='call event store is disabled')
@@ -68,6 +69,8 @@ class EventStoreClient(HostingHttpClient):
                 'local_number': local_number,
                 'sim_port': str(sim_port or ''),
             }
+            if source_id:
+                data['source_id'] = source_id
             if transcription_channels:
                 data['transcription_channels'] = json.dumps(transcription_channels, ensure_ascii=False)
             if transcription:
@@ -92,6 +95,8 @@ class EventStoreClient(HostingHttpClient):
             'local_number': local_number,
             'sim_port': sim_port,
         }
+        if source_id:
+            payload['source_id'] = source_id
         if transcription_channels:
             payload['transcription_channels'] = transcription_channels
         if transcription:

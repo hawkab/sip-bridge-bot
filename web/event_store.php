@@ -92,6 +92,36 @@ function append_event_record(string $path, array $record): void
     });
 }
 
+// Voice recordings may be retried after a lost HTTP response, or updated when
+// recognition recovers. Keep a single card, stable URL and one copy of audio.
+function save_call_event_record(array $record): array
+{
+    return with_event_store_lock(CALLS_JSON_PATH, static function (array $items) use ($record): array {
+        $index = null;
+        $sourceId = (string) ($record['source_id'] ?? '');
+        if ($sourceId !== '') {
+            foreach ($items as $i => $item) {
+                if (($item['source_id'] ?? '') === $sourceId) { $index = $i; break; }
+            }
+        }
+        $oldFile = null;
+        if ($index === null) {
+            array_unshift($items, $record);
+        } else {
+            $oldFile = $items[$index]['recording_file'] ?? null;
+            $record['id'] = $items[$index]['id'];
+            $record['created_at'] = $items[$index]['created_at'] ?? $record['created_at'];
+            $items[$index] = $record;
+        }
+        write_event_store(CALLS_JSON_PATH, $items);
+        if (is_string($oldFile) && $oldFile !== '' && basename($oldFile) === $oldFile
+            && !str_contains($oldFile, '\\') && !in_array($oldFile, array_column($items, 'recording_file'), true)) {
+            @unlink(RECORDINGS_DIR . '/' . $oldFile);
+        }
+        return ['record' => $record, 'created' => $index === null];
+    });
+}
+
 function delete_event_records(string $kind, array $ids): array
 {
     if (!in_array($kind, ['calls', 'sms'], true) || !$ids) {

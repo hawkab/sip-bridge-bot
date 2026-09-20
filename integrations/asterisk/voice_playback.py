@@ -13,6 +13,7 @@ import wave
 READY_TIMEOUT = 45
 # Longer than the silent gap between Russian GSM ringback bursts.
 QUIET_TIMEOUT = 6
+RESPONSE_SECONDS = 15
 
 
 class AGI:
@@ -62,6 +63,16 @@ def await_audio(agi):
     agi.command('SET VARIABLE TONE_DETECT(450,350,r) ""')
     hits = int(agi.variable('TONE_DETECT(rx)'))
     pjsip = agi.metadata.get('agi_channel', '').startswith('PJSIP/')
+    # A normally answered call needs only one second of quiet. Keep the longer
+    # cadence guard only if the gateway actually sends post-answer ringing.
+    rx_before = int(agi.variable('CHANNEL(rtcp,rxcount)')) if pjsip else None
+    silence = agi.wait('WaitForSilence', 1000, 5)
+    current = int(agi.variable('TONE_DETECT(rx)'))
+    has_audio = not pjsip or int(agi.variable('CHANNEL(rtcp,rxcount)')) > rx_before
+    if silence == 'SILENCE' and current == hits and has_audio:
+        agi.command('SET VARIABLE TONE_DETECT(0,,x) ""')
+        return 'answered_audio'
+    hits = current
     while time.monotonic() < deadline:
         remaining = deadline-time.monotonic()
         if remaining <= 0:
@@ -73,7 +84,7 @@ def await_audio(agi):
             remaining = deadline-time.monotonic()
             if remaining <= 0:
                 break
-            silence = agi.wait('WaitForSilence', 700, min(5, math.ceil(remaining)))
+            silence = agi.wait('WaitForSilence', 1000, min(5, math.ceil(remaining)))
         else:
             silence = 'SILENCE'
         current = int(agi.variable('TONE_DETECT(rx)'))
@@ -105,6 +116,13 @@ def play(directory):
             raise EOFError('Channel is not answered')
         if agi.metadata.get('agi_channel', '').startswith('PJSIP/'):
             details['sip_call_id'] = agi.variable('CHANNEL(pjsip,call-id)')
+        converter = Path(__file__).with_name('voice_recording.py').resolve()
+        if any(not re.fullmatch(r'/[A-Za-z0-9_/.-]+', str(p)) for p in (directory, converter)):
+            raise ValueError('Unsafe recording path')
+        # MixMonitor's post-process command runs after its files are closed,
+        # including remote hangups when AGI can no longer run StopMixMonitor.
+        agi.command(f'EXEC MixMonitor "{directory}/conversation.raw,D,{converter} {directory}"')
+        details['recording'] = 'conversation.wav'
         readiness = await_audio(agi)
         details['readiness'] = readiness
         if readiness is None:
@@ -117,8 +135,10 @@ def play(directory):
             if code == 0 and playback == 'SUCCESS' and endpos is not None and endpos >= frames:
                 result = {'status': 'completed', 'message':
                           'Запись полностью передана в отвеченный канал. Прослушивание получателем не подтверждается.'}
-                # Let the final audio frames leave the channel before hanging up.
-                agi.command('EXEC Wait "1"')
+                # Record the recipient's reply for exactly this window, unless
+                # they hang up first. A hangup here does not undo full playback.
+                details['response_seconds'] = RESPONSE_SECONDS
+                agi.command(f'EXEC Wait "{RESPONSE_SECONDS}"')
     except (EOFError, BrokenPipeError, OSError, ValueError, wave.Error) as exc:
         details['error'] = str(exc)
     finally:

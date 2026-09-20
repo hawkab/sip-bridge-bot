@@ -195,6 +195,10 @@ $timestampInput = trim((string) ($data['timestamp'] ?? ''));
 $number = trim((string) ($data['number'] ?? ''));
 $duration = (int) ($data['duration'] ?? 0);
 $transcription = extract_transcription_entries_from_payload(is_array($data) ? $data : []);
+$sourceId = (string) ($data['source_id'] ?? '');
+if ($sourceId !== '' && !preg_match('/^voice:[a-f0-9]{32}$/D', $sourceId)) {
+    respond_call_save_failure('Invalid voice call source_id.', [], 400);
+}
 
 if ($type === '' || $timestampInput === '' || $number === '') {
     respond_call_save_failure('type, timestamp and number are required.', [
@@ -242,9 +246,11 @@ $record = [
     'transcription_channels' => normalize_transcription_channels($data['transcription_channels'] ?? []),
     'created_at' => format_timestamp_moscow(time()),
 ];
+if ($sourceId !== '') $record['source_id'] = $sourceId;
 
 try {
-    append_event_record(CALLS_JSON_PATH, $record);
+    $stored = save_call_event_record($record);
+    $record = $stored['record'];
 } catch (Throwable $e) {
     respond_call_save_failure('Failed to save call.', [
         'exception' => $e->getMessage(),
@@ -256,7 +262,7 @@ $pushUrl = get_event_view_url('call', (string) $record['id'], true);
 
 try {
     $durationText = $record['duration'] > 0 ? (' (' . $record['duration'] . ' сек)') : '';
-    send_push_to_all([
+    if ($stored['created']) send_push_to_all([
         'title' => 'Новый звонок',
         'body' => sprintf('%s %s%s', mb_safe_title($typeLower), $number, $durationText),
         'url' => $pushUrl,

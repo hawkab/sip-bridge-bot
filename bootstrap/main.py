@@ -18,6 +18,7 @@ from workers.sms_outbox import SmsOutboxWorker
 from integrations.event_store.voice_outbox import VoiceOutboxClient
 from integrations.asterisk.voice_calls import AsteriskVoiceCalls
 from workers.voice_outbox import VoiceOutboxWorker
+from workers.voice_recordings import VoiceRecordingWorker
 from services.delivery_service import DeliveryHub
 from services.event_router import send_startup_notification, start_cdr_monitor
 from services.system_ops import get_app_version_text
@@ -50,7 +51,10 @@ async def run_bot(http) -> None:
         if sms_outbox.enabled:
             tasks.append(asyncio.create_task(SmsOutboxWorker(sms_outbox, ys, CONFIG, delivery).run_forever(), name="sms-outbox"))
         if voice_outbox.enabled:
-            tasks.append(asyncio.create_task(VoiceOutboxWorker(voice_outbox, AsteriskVoiceCalls(CONFIG), delivery).run_forever(), name="voice-outbox"))
+            voice_calls = AsteriskVoiceCalls(CONFIG)
+            tasks.append(asyncio.create_task(VoiceOutboxWorker(voice_outbox, voice_calls, delivery).run_forever(), name="voice-outbox"))
+            tasks.append(asyncio.create_task(VoiceRecordingWorker(voice_calls, event_store, transcriber,
+                transcription_pdf_renderer, delivery).run_forever(), name="voice-recordings"))
         if delivery.is_imap_enabled():
             mail_gateway = MailGateway(CONFIG, delivery, command_service)
             tasks.append(asyncio.create_task(mail_gateway.run_forever(), name="mail-gateway"))

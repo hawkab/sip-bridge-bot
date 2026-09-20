@@ -32,7 +32,7 @@ class AudioChannel:
         expected, status, elapsed, hits, packets = next(self.waits)
         assert app == expected
         assert 0 < seconds <= 6
-        self.now += elapsed
+        self.now += min(elapsed, seconds)
         self.hits += hits
         self.received += packets
         return status
@@ -45,8 +45,7 @@ class PlaybackTests(unittest.TestCase):
 
     def test_two_ringback_bursts_then_greeting(self):
         channel = AudioChannel([
-            ('WaitForNoise', 'NOISE', .2, 0, 10),
-            ('WaitForSilence', 'SILENCE', 1.5, 1, 75),
+            ('WaitForSilence', 'SILENCE', 2, 1, 100),
             ('WaitForNoise', 'NOISE', 3.5, 0, 175),
             ('WaitForSilence', 'SILENCE', 1.5, 1, 75),
             ('WaitForNoise', 'NOISE', 3.5, 0, 175),
@@ -58,28 +57,28 @@ class PlaybackTests(unittest.TestCase):
 
     def test_silent_answer_requires_inbound_rtp(self):
         channel = AudioChannel([
+            ('WaitForSilence', 'SILENCE', 1, 0, 0),
             ('WaitForNoise', 'TIMEOUT', 6, 0, 0),
             ('WaitForNoise', 'TIMEOUT', 6, 0, 300),
         ])
         self.assertEqual(self.readiness(channel), 'quiet_audio')
-        self.assertEqual(channel.now, 12)
+        self.assertEqual(channel.now, 13)
 
     def test_missing_rtp_stops_after_deadline(self):
-        channel = AudioChannel([('WaitForNoise', 'TIMEOUT', 6, 0, 0)]*8)
+        channel = AudioChannel([('WaitForSilence', 'SILENCE', 1, 0, 0)]+[('WaitForNoise', 'TIMEOUT', 6, 0, 0)]*8)
         self.assertIsNone(self.readiness(channel))
         self.assertLessEqual(channel.now, 48)
 
     def test_ringback_never_turns_into_success_on_timeout(self):
-        channel = AudioChannel([
+        channel = AudioChannel([('WaitForSilence', 'SILENCE', 2, 1, 100)]+[
             ('WaitForNoise', 'NOISE', .2, 0, 10),
             ('WaitForSilence', 'SILENCE', 4.8, 1, 240),
         ]*9)
         self.assertIsNone(self.readiness(channel))
-        self.assertEqual(channel.now, 45)
+        self.assertLessEqual(channel.now, 46)
 
     def test_unfinished_greeting_waits_for_silence(self):
         channel = AudioChannel([
-            ('WaitForNoise', 'NOISE', .2, 0, 10),
             ('WaitForSilence', 'TIMEOUT', 5, 0, 250),
             ('WaitForNoise', 'NOISE', .2, 0, 10),
             ('WaitForSilence', 'SILENCE', 1, 0, 50),
@@ -87,7 +86,13 @@ class PlaybackTests(unittest.TestCase):
         self.assertEqual(self.readiness(channel), 'greeting_finished')
         self.assertGreater(channel.now, 6)
 
+    def test_normal_quiet_answer_starts_after_one_second(self):
+        channel = AudioChannel([('WaitForSilence', 'SILENCE', 1, 0, 50)])
+        self.assertEqual(self.readiness(channel), 'answered_audio')
+        self.assertEqual(channel.now, 1)
+
     def playback(self, responses, readiness='greeting_finished'):
+        responses = responses.replace('200 result=6\n', '200 result=6\n200 result=0\n', 1)
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             with wave.open(str(directory/'message.wav'), 'wb') as wav:
@@ -110,7 +115,10 @@ class PlaybackTests(unittest.TestCase):
             ('', 'interrupted'),
         ]:
             with self.subTest(response=response):
-                result, _ = self.playback('200 result=6\n'+response)
+                result, commands = self.playback('200 result=6\n'+response)
+                self.assertIn('EXEC MixMonitor', commands)
+                if status == 'completed':
+                    self.assertIn('EXEC Wait \"15\"', commands)
                 self.assertEqual(result['status'], status)
                 self.assertEqual(result['diagnostics']['uniqueid'], 'test-id')
 
