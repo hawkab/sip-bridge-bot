@@ -63,26 +63,26 @@ class DeliveryHub:
         telegram_followup_attachment_parse_mode: str | None = None,
         telegram_bundle_attachment_path: str | None = None,
         telegram_bundle_attachment_name: str | None = None,
+        telegram_enabled: bool = True,
     ) -> None:
         resolved_email_attachment_path = attachment_path if email_attachment_path is _EMAIL_ATTACHMENT_DEFAULT else email_attachment_path
         resolved_email_attachment_name = attachment_name if email_attachment_path is _EMAIL_ATTACHMENT_DEFAULT else email_attachment_name
 
         should_bundle_telegram_files = bool(attachment_path and telegram_bundle_attachment_path)
-        await asyncio.gather(
-            self._notify_telegram(
+        deliveries = [self._notify_email(subject, email_text or text, resolved_email_attachment_path, resolved_email_attachment_name, email_html)]
+        if telegram_enabled:
+            deliveries.append(self._notify_telegram(
                 text,
                 attachment_path,
                 attachment_name,
                 parse_mode=parse_mode,
                 bundled_attachment_path=telegram_bundle_attachment_path if should_bundle_telegram_files else None,
                 bundled_attachment_name=telegram_bundle_attachment_name if should_bundle_telegram_files else None,
-            ),
-            self._notify_email(subject, email_text or text, resolved_email_attachment_path, resolved_email_attachment_name, email_html),
-            return_exceptions=True,
-        )
-        if telegram_followup_text:
+            ))
+        await asyncio.gather(*deliveries, return_exceptions=True)
+        if telegram_enabled and telegram_followup_text:
             await self._notify_telegram(telegram_followup_text, None, None, parse_mode=telegram_followup_parse_mode)
-        if telegram_followup_attachment_path and not should_bundle_telegram_files:
+        if telegram_enabled and telegram_followup_attachment_path and not should_bundle_telegram_files:
             await self._notify_telegram(
                 telegram_followup_attachment_caption or '',
                 telegram_followup_attachment_path,

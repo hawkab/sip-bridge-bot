@@ -79,9 +79,10 @@ async def start_cdr_monitor(delivery: DeliveryHub, event_store: EventStoreClient
 
 
 async def handle_sms_notification(delivery: DeliveryHub, event_store: EventStoreClient, sender: str, sim: str, when: str, text: str) -> None:
-    event = SMSReceivedEvent(sender=sender, sim=sim, received_at=when, text=text)
+    identity = sms_identity(event_store.config, sim)
+    event = SMSReceivedEvent(sender=sender, sim=sim, received_at=when, text=text, local_number=identity['local_number'])
     message_text = format_sms(event)
-    view_url = await event_store.save_sms(timestamp=event.received_at, number=event.sender, text=event.text, **sms_identity(event_store.config, event.sim))
+    view_url = await event_store.save_sms(timestamp=event.received_at, number=event.sender, text=event.text, **identity)
     email_text = _append_event_link(message_text, view_url, 'Карточка SMS')
     await delivery.notify_event(
         subject=f'SipBridgeBot: SMS от {event.sender}',

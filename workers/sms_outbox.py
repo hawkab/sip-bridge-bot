@@ -52,4 +52,5 @@ class SmsOutboxWorker:
         self.pending_result = None
         logger.info('SMS %s: %s (SIM %s)', job['id'], result.status, job['port'])
         await self.delivery.notify_event(subject='SipBridgeBot: результат отправки СМС',
-            text=f"СМС {job['id']}\nОт: {job['sender'] or 'SIM ' + str(job['port'])}\nКому: {job['number']}\n{result.message}", parse_mode=None)
+            text=f"СМС {job['id']}\nОт: {job['sender'] or 'SIM ' + str(job['port'])}\nКому: {job['number']}\n{result.message}", parse_mode=None,
+            telegram_enabled=False)

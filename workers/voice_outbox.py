@@ -32,7 +32,8 @@ class VoiceOutboxWorker:
             await self.client.request('complete', id=job['id'], claim_token=job['claim_token'], **result)
             self.calls.save({**job, 'reported': True, 'result': result})
             await self.delivery.notify_event(subject='SipBridgeBot: голосовой вызов',
-                text=f"Вызов {job['id']}\nКому: {job['number']}\n{result['message']}", parse_mode=None)
+                text=f"Вызов {job['id']}\nКому: {job['number']}\n{result['message']}", parse_mode=None,
+                telegram_enabled=False)
         if active or heartbeat.get('has_due') is False or not await self.calls.ready():
             return
         job = (await self.client.request('claim')).get('job')

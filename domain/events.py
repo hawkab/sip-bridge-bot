@@ -7,6 +7,7 @@ class SMSReceivedEvent:
     sim: str
     received_at: str
     text: str
+    local_number: str = ''
 
 
 @dataclass
