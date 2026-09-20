@@ -550,7 +550,7 @@ $appConfig = [
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="notifications.js?v=20260920-02"></script>
-<script src="voice_calls.js?v=20260920-02"></script>
+<script src="voice_calls.js?v=<?= hash_file('sha256', __DIR__ . '/voice_calls.js') ?>"></script>
 <script>
 (() => {
     const APP_CONFIG = <?= json_encode($appConfig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
