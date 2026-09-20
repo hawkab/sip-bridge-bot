@@ -19,7 +19,8 @@ class VoiceOutboxWorker:
             await asyncio.sleep(2)
 
     async def run_once(self):
-        heartbeat = await self.client.request('heartbeat')
+        ports = getattr(self.calls, 'sender_ports', None)
+        heartbeat = await self.client.request('heartbeat', **({'ports': ports} if ports is not None else {}))
         active = False
         for job in self.calls.journals():
             if job.get('reported'):

@@ -1,5 +1,6 @@
 import asyncio
 import time
+from integrations.asterisk.sim_identity import sms_identity, call_identity
 from typing import Any
 
 from domain.events import CdrGroupEvent, SMSReceivedEvent
@@ -40,6 +41,7 @@ async def handle_cdr_group_notification(delivery: DeliveryHub, event_store: Even
         attachment_path,
         attachment_name,
         (transcription_payload or {}).get('conversation'),
+        (transcription_payload or {}).get('channels'),
     )
 
     email_link_label = 'Карточка звонка' if call_store_result.ok else 'Карточка ошибки'
@@ -79,7 +81,7 @@ async def start_cdr_monitor(delivery: DeliveryHub, event_store: EventStoreClient
 async def handle_sms_notification(delivery: DeliveryHub, event_store: EventStoreClient, sender: str, sim: str, when: str, text: str) -> None:
     event = SMSReceivedEvent(sender=sender, sim=sim, received_at=when, text=text)
     message_text = format_sms(event)
-    view_url = await event_store.save_sms(timestamp=event.received_at, number=event.sender, text=event.text)
+    view_url = await event_store.save_sms(timestamp=event.received_at, number=event.sender, text=event.text, **sms_identity(event_store.config, event.sim))
     email_text = _append_event_link(message_text, view_url, 'Карточка SMS')
     await delivery.notify_event(
         subject=f'SipBridgeBot: SMS от {event.sender}',
@@ -108,6 +110,7 @@ async def _save_call_event(
     recording_path: str | None,
     recording_name: str | None,
     transcription: list[dict[str, Any]] | None,
+    transcription_channels: dict | None = None,
 ) -> CallStoreResult:
     payload = _build_call_payload(rows)
     if not payload:
@@ -117,9 +120,11 @@ async def _save_call_event(
         timestamp=payload['timestamp'],
         number=payload['number'],
         duration=payload['duration'],
+        **call_identity(event_store.config, rows),
         recording_path=recording_path,
         recording_name=recording_name,
         transcription=transcription,
+        transcription_channels=transcription_channels,
     )
 
 

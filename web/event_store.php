@@ -59,8 +59,8 @@ function append_event_record(string $path, array $record): void
 
 function delete_event_records(string $kind, array $ids): array
 {
-    if (!in_array($kind, ['calls', 'sms'], true) || !$ids || count($ids) > 100) {
-        throw new InvalidArgumentException('Выберите от 1 до 100 записей одного типа.');
+    if (!in_array($kind, ['calls', 'sms'], true) || !$ids) {
+        throw new InvalidArgumentException('Выберите записи одного типа.');
     }
     foreach ($ids as $id) {
         if (!is_string($id) || $id === '' || strlen($id) > 128) {
@@ -110,4 +110,18 @@ function event_deletion_csrf_token(): string
         $_SESSION['event_deletion_csrf'] = bin2hex(random_bytes(32));
     }
     return $_SESSION['event_deletion_csrf'];
+}
+
+function normalize_transcription_channels($value): array
+{
+    if (is_string($value)) $value = json_decode($value, true);
+    if (!is_array($value)) return [];
+    $result = [];
+    foreach (['left','right'] as $channel) {
+        $meta = $value[$channel] ?? null;
+        if (!is_array($meta) || !in_array($meta['status'] ?? null, ['recognized','unrecognized','no_speech'], true)) continue;
+        $result[$channel] = ['status'=>$meta['status'], 'speaker'=>substr((string) ($meta['speaker'] ?? ''), 0, 160),
+            'speech_seconds'=>max(0, min(86400, (float) ($meta['speech_seconds'] ?? 0)))];
+    }
+    return $result;
 }

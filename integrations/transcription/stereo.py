@@ -29,6 +29,7 @@ class ChannelResult:
     detected_language: str | None
     language_probability: float | None
     segments: list[dict[str, Any]]
+    speech_seconds: float = 0
 
 
 class StereoCallTranscriber:
@@ -318,6 +319,7 @@ def transcribe_channel(
         detected_language=detected_language,
         language_probability=language_probability,
         segments=rows,
+        speech_seconds=sum(i['end']-i['start'] for i in intervals)/16000,
     )
 
 
@@ -567,12 +569,16 @@ def build_output_json(
                 'detected_language': left.detected_language,
                 'language_probability': left.language_probability,
                 'segments_count': len(left.segments),
+                'speech_seconds': round(left.speech_seconds, 3),
+                'status': 'recognized' if left.segments else ('unrecognized' if left.speech_seconds > 0 else 'no_speech'),
             },
             'right': {
                 'speaker': right.speaker,
                 'detected_language': right.detected_language,
                 'language_probability': right.language_probability,
                 'segments_count': len(right.segments),
+                'speech_seconds': round(right.speech_seconds, 3),
+                'status': 'recognized' if right.segments else ('unrecognized' if right.speech_seconds > 0 else 'no_speech'),
             },
         },
         'conversation': conversation,

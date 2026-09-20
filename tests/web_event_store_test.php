@@ -47,9 +47,11 @@ try {
     check(!is_file(RECORDINGS_DIR . '/shared.wav'), 'Last reference deletes shared recording');
     delete_event_records('sms', ['sms1']);
     check(json_decode(file_get_contents(SMS_JSON_PATH), true) === [['id'=>'sms2']], 'Retain unselected SMS');
-    foreach ([[], [123], [''], array_fill(0,101,'x')] as $ids) {
+    foreach ([[], [123], ['']] as $ids) {
         rejected(fn()=>delete_event_records('calls', $ids), InvalidArgumentException::class);
     }
+    file_put_contents(SMS_JSON_PATH, json_encode(array_map(fn($i)=>['id'=>'many-'.$i],range(1,205))));
+    check(count(delete_event_records('sms', array_map(fn($i)=>'many-'.$i,range(1,205)))['deleted_ids']) === 205, 'Select all can delete more than one page or 100 records');
     rejected(fn()=>delete_event_records('errors', ['a']), InvalidArgumentException::class);
     file_put_contents(CALLS_JSON_PATH, '{broken');
     rejected(fn()=>delete_event_records('calls', ['a']), RuntimeException::class);

@@ -17,11 +17,15 @@ try {
     $before = file_get_contents($path);
     voice_worker_action(['action'=>'heartbeat']);
     check(file_get_contents($path) === $before, 'Repeated idle heartbeat does not rewrite storage');
+    voice_worker_action(['action'=>'heartbeat', 'ports'=>[['port'=>1,'number'=>'+79990000001'],['port'=>2,'number'=>'+79990000002']]]);
     $audio = str_repeat('sample', 100);
-    $request = ['request_key'=>'voice-request-0001','number'=>'+79991111111','scheduled_at'=>''];
+    $request = ['sender'=>'2','request_key'=>'voice-request-0001','number'=>'+79991111111','scheduled_at'=>''];
     $job = voice_enqueue($request, 'web', $audio);
     check(voice_worker_action(['action'=>'heartbeat'])['has_due'] === true, 'Due call discovered without claiming');
     check(voice_enqueue($request, 'web', $audio)['id'] === $job['id'], 'Idempotent audio upload');
+    check($job['sender'] === '+79990000002' && $job['port'] === 2, 'Persist selected sender');
+    invalid(fn()=>voice_enqueue(array_replace($request,['sender'=>'1']), 'web', $audio));
+    invalid(fn()=>voice_enqueue(array_replace($request,['sender'=>'3']), 'web', $audio));
     invalid(fn()=>voice_enqueue($request, 'web', $audio.'different'));
     invalid(fn()=>voice_enqueue(array_replace($request,['number'=>"+79991111111\nApplication: System"]), 'web', $audio));
     invalid(fn()=>voice_enqueue(array_replace($request,['scheduled_at'=>'2026-02-30T12:00:00Z']), 'web', $audio));

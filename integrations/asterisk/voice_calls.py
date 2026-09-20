@@ -73,6 +73,9 @@ class AsteriskVoiceCalls:
         self.root = Path(config.VOICE_CALLS_DIR)
         self.outgoing = Path(config.VOICE_CALLS_SPOOL)
         self.endpoint = config.VOICE_CALLS_ENDPOINT
+        self.routes = getattr(config, 'VOICE_CALLS_ROUTES', [])
+        self.default_port = getattr(config, 'TG_DEFAULT_SIM', 1)
+        self.sender_ports = [{'port':r['port'], 'number':r['number']} for r in self.routes]
         self.agi = Path(__file__).with_name('voice_playback.py').resolve()
         self.cli = config.ASTERISK_CLI
         if not re.fullmatch(r'[A-Za-z0-9_-]+', self.endpoint):
@@ -105,6 +108,15 @@ class AsteriskVoiceCalls:
     async def prepare_and_originate(self, job, audio):
         if not re.fullmatch(r'[a-f0-9]{32}', job['id']) or not re.fullmatch(r'\+[1-9][0-9]{6,14}', job['number']):
             raise ValueError('Некорректный номер или идентификатор вызова.')
+        port = job.get('port', self.default_port)
+        route = next((r for r in self.routes if r['port'] == port), None)
+        if self.routes and (route is None or (job.get('sender') and job['sender'] != route['number'])):
+            raise ValueError('Выбранная SIM больше не доступна для вызова.')
+        endpoint = route['endpoint'] if route else self.endpoint
+        prefix = route.get('prefix', '') if route else ''
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', endpoint) or not re.fullmatch(r'[0-9*#]{0,12}', prefix):
+            raise ValueError('Некорректный маршрут GSM.')
+        dial_number = prefix + job['number']
         directory = self.root/job['id']
         if (directory/'job.json').exists():
             raise RuntimeError('Call already recorded in the local journal')
@@ -118,7 +130,7 @@ class AsteriskVoiceCalls:
         staging = self.outgoing.parent/'sip-voice-staging'
         staging.mkdir(mode=0o700, exist_ok=True)
         pending = staging/filename
-        content = (f"Channel: PJSIP/{job['number']}@{self.endpoint}\nMaxRetries: 0\nWaitTime: 45\n"
+        content = (f"Channel: PJSIP/{dial_number}@{endpoint}\nMaxRetries: 0\nWaitTime: 45\n"
             f"Application: AGI\nData: {self.agi},{directory}\nArchive: yes\n"
             f"Account: voice-{job['id']}\n")
         with pending.open('x') as stream:

@@ -109,3 +109,12 @@ test('batch delete sends exactly selected IDs and CSRF; cancellation sends no re
     } else assert.equal(state.calls.selected.size,2);
   }
 });
+test('selection survives pagination and is pruned only when IDs disappear from the whole store',()=>{
+  const index=source('index.php'), start=index.indexOf('    function applyListState('), end=index.indexOf('    async function loadCalls()',start);
+  const state={deletionCsrf:'',calls:{items:[{id:'one'}],meta:{page:1},selected:new Set(['one','two']),allIds:['one','two']}};
+  const context={state,isSamePayload:(a,b)=>JSON.stringify(a)===JSON.stringify(b)};vm.createContext(context);vm.runInContext(index.slice(start,end),context);
+  context.applyListState('calls',{items:[{id:'two'}],all_ids:['one','two','three'],meta:{page:2},csrf_token:'csrf'});
+  assert.deepEqual([...state.calls.selected],['one','two']);
+  context.applyListState('calls',{items:[{id:'two'}],all_ids:['two','three'],meta:{page:2}});
+  assert.deepEqual([...state.calls.selected],['two']);
+});

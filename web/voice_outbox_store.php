@@ -58,7 +58,7 @@ function voice_state(): array
         usort($pending, static fn($a,$b) => $a['scheduled_unix'] <=> $b['scheduled_unix']);
         $history = array_values(array_filter(array_reverse($store['jobs']), static fn(array $j): bool => !in_array($j['status'], ['queued','calling'], true)));
         return ['jobs'=>array_map('voice_public_job', array_merge($pending, array_slice($history, 0, 100-count($pending)))),
-            'connected'=>$store['worker_seen'] > time()-90, 'timezone'=>'Europe/Moscow'];
+            'ports'=>$store['ports'] ?? [], 'connected'=>$store['worker_seen'] > time()-90, 'timezone'=>'Europe/Moscow'];
     });
 }
 
@@ -67,6 +67,8 @@ function voice_enqueue(array $data, string $source, string $audio): array
     $key = $data['request_key'] ?? null;
     $number = $data['number'] ?? null;
     $when = $data['scheduled_at'] ?? '';
+    $sender = $data['sender'] ?? null;
+    if ($sender !== null && !is_string($sender) && !is_int($sender)) throw new InvalidArgumentException('Выберите SIM отправителя.');
     if (!is_string($key) || !preg_match('/^[a-zA-Z0-9_.:-]{16,128}$/D', $key)
         || !is_string($number) || !preg_match('/^\+[1-9][0-9]{6,14}$/D', $number)
         || !is_string($when) || strlen($audio) < 32 || strlen($audio) > VOICE_MAX_BYTES) {
@@ -80,11 +82,18 @@ function voice_enqueue(array $data, string $source, string $audio): array
     }
     if ($at === false) throw new InvalidArgumentException('Некорректное время вызова.');
     $hash = hash('sha256', $audio);
-    return voice_transaction(static function(array &$store) use ($key, $number, $when, $at, $hash, $audio, $source): array {
+    return voice_transaction(static function(array &$store) use ($key, $number, $when, $at, $hash, $audio, $source, $sender): array {
+        $port = null;
+        foreach ($store['ports'] ?? [] as $candidate) {
+            if ((string) $candidate['port'] === (string) $sender || $candidate['number'] === $sender) $port = $candidate;
+        }
+        // Existing Telegram clients may omit sender and use the configured first route.
+        if ($sender === null && $source !== 'web') $port = ($store['ports'] ?? [])[0] ?? null;
+        if (!$port) throw new InvalidArgumentException('Выберите доступный номер отправителя.');
         // A retry after a lost HTTP response returns the same job, even after its due time.
         foreach ($store['jobs'] as $job) {
             if ($job['request_key'] !== $key) continue;
-            if ($job['number'] !== $number || $job['requested_at'] !== $when || $job['audio_hash'] !== $hash || $job['source'] !== $source) throw new InvalidArgumentException('Запрос уже использован для другой записи.');
+            if ($job['number'] !== $number || $job['requested_at'] !== $when || $job['audio_hash'] !== $hash || $job['source'] !== $source || ($job['port'] ?? null) !== $port['port'] || ($job['sender'] ?? '') !== $port['number']) throw new InvalidArgumentException('Запрос уже использован для другой записи.');
             return voice_public_job($job);
         }
         if ($when !== '' && ($at <= time() || $at > time()+90*86400)) throw new InvalidArgumentException('Выберите будущее время в пределах 90 дней.');
@@ -96,7 +105,7 @@ function voice_enqueue(array $data, string $source, string $audio): array
         if (!is_dir($dir) && !mkdir($dir, 0700, true)) throw new RuntimeException('Не удалось сохранить запись.');
         if (file_put_contents($dir . '/' . $id . '.audio', $audio, LOCK_EX) !== strlen($audio)) throw new RuntimeException('Не удалось сохранить запись.');
         chmod($dir . '/' . $id . '.audio', 0600);
-        $job = ['id'=>$id, 'request_key'=>$key, 'number'=>$number, 'source'=>$source, 'requested_at'=>$when,
+        $job = ['id'=>$id, 'request_key'=>$key, 'number'=>$number, 'port'=>$port['port'], 'sender'=>$port['number'], 'source'=>$source, 'requested_at'=>$when,
             'scheduled_at'=>gmdate('Y-m-d\TH:i:s\Z', $at), 'scheduled_unix'=>$at, 'audio_hash'=>$hash,
             'status'=>'queued', 'message'=>'Ожидает времени вызова', 'created_at'=>gmdate('Y-m-d\TH:i:s\Z')];
         $store['jobs'][] = $job;
@@ -132,6 +141,17 @@ function voice_worker_action(array $data): array
 {
     return voice_transaction(static function(array &$store) use ($data): array {
         if ($data['action'] === 'heartbeat') {
+            if (array_key_exists('ports', $data)) {
+                if (!is_array($data['ports']) || count($data['ports']) > 32) throw new InvalidArgumentException('Invalid voice routes.');
+                $ports = [];
+                foreach ($data['ports'] as $port) {
+                    if (!is_array($port) || !is_int($port['port'] ?? null) || $port['port'] < 1 || $port['port'] > 32
+                        || !is_string($port['number'] ?? null) || !preg_match('/^\+[1-9][0-9]{6,14}$/D', $port['number'])
+                        || isset($ports[$port['port']])) throw new InvalidArgumentException('Invalid voice route.');
+                    $ports[$port['port']] = ['port'=>$port['port'], 'number'=>$port['number']];
+                }
+                $store['ports'] = array_values($ports);
+            }
             if ($store['worker_seen'] <= time()-15) $store['worker_seen'] = time();
             $due = false;
             foreach ($store['jobs'] as $job) {

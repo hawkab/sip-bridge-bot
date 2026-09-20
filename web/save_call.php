@@ -234,9 +234,12 @@ $record = [
     'timestamp' => format_timestamp_moscow($timestamp),
     'type' => $typeLower,
     'number' => $number,
+    'local_number' => preg_match('/^\+[1-9][0-9]{6,14}$/D', (string) ($data['local_number'] ?? '')) ? $data['local_number'] : '',
+    'sim_port' => filter_var($data['sim_port'] ?? null, FILTER_VALIDATE_INT, ['options'=>['min_range'=>1, 'max_range'=>32]]) ?: null,
     'duration' => max(0, $duration),
     'recording_file' => $recordingFile,
     'transcription' => $transcription,
+    'transcription_channels' => normalize_transcription_channels($data['transcription_channels'] ?? []),
     'created_at' => format_timestamp_moscow(time()),
 ];
 

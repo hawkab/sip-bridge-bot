@@ -115,6 +115,30 @@ class Config:
                 raise ValueError("Invalid SMS_SIM_PORTS_JSON entry")
             seen_ports.add(port["port"])
 
+        self.VOICE_CALLS_ROUTES = json.loads(os.environ.get("VOICE_CALLS_ROUTES_JSON", json.dumps([
+            dict(port=p['port'], number=p['number'], endpoint=self.VOICE_CALLS_ENDPOINT, prefix='')
+            for p in self.SMS_SIM_PORTS if p['port'] == self.TG_DEFAULT_SIM and p['number']
+        ])))
+        if not isinstance(self.VOICE_CALLS_ROUTES, list):
+            raise ValueError('VOICE_CALLS_ROUTES_JSON must contain configured GSM routes')
+        route_ports = set()
+        for route in self.VOICE_CALLS_ROUTES:
+            if (not isinstance(route, dict) or type(route.get('port')) is not int
+                or route['port'] not in seen_ports or route['port'] in route_ports
+                or not isinstance(route.get('number'), str)
+                or not re.fullmatch(r'\+[1-9][0-9]{6,14}', route['number'])
+                or not re.fullmatch(r'[A-Za-z0-9_-]+', str(route.get('endpoint', '')))
+                or not re.fullmatch(r'[0-9*#]{0,12}', str(route.get('prefix', '')))):
+                raise ValueError('Invalid VOICE_CALLS_ROUTES_JSON entry')
+            route_ports.add(route['port'])
+        self.CALL_GSM_INBOUND_DIDS = json.loads(os.environ.get('CALL_GSM_INBOUND_DIDS_JSON', '{}'))
+        if not isinstance(self.CALL_GSM_INBOUND_DIDS, dict) or any(
+            not re.fullmatch(r'[+0-9]{1,32}', did) or type(port) is not int or port not in seen_ports
+            for did, port in self.CALL_GSM_INBOUND_DIDS.items()
+        ):
+            raise ValueError('Invalid CALL_GSM_INBOUND_DIDS_JSON')
+
+
         self.CALL_TRANSCRIBE_ENABLED = os.environ.get("CALL_TRANSCRIBE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
         self.CALL_TRANSCRIBE_BACKEND = os.environ.get("CALL_TRANSCRIBE_BACKEND", "gigaam").strip().lower()
         if self.CALL_TRANSCRIBE_BACKEND not in {"gigaam", "whisper"}:

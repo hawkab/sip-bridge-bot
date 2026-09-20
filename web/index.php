@@ -5,6 +5,7 @@ require_once __DIR__ . '/common.php';
 require_once __DIR__ . '/transcription_settings_store.php';
 require_once __DIR__ . '/event_store.php';
 require_once __DIR__ . '/sms_outbox_store.php';
+require_once __DIR__ . '/sms_chat.php';
 require_once __DIR__ . '/voice_outbox_store.php';
 
 ensure_access_or_404();
@@ -116,6 +117,13 @@ if ($action !== '') {
                 json_response(['ok'=>false, 'message'=>$error->getMessage()], 500);
             }
             break;
+        case 'get_sms_chat':
+            try {
+                json_response(['ok'=>true, 'csrf_token'=>event_deletion_csrf_token()] + sms_chat($_GET));
+            } catch (InvalidArgumentException $error) {
+                json_response(['ok'=>false, 'message'=>$error->getMessage()], 400);
+            }
+            break;
         case 'get_sms_outbox':
             try {
                 json_response(['ok'=>true, 'csrf_token'=>event_deletion_csrf_token()] + sms_outbox_state());
@@ -133,7 +141,7 @@ if ($action !== '') {
                 json_response(['ok'=>false, 'message'=>'Обновите страницу и повторите отправку.'], 403);
             }
             try {
-                json_response(['ok'=>true, 'job'=>sms_outbox_enqueue($data, 'web')]);
+                json_response(['ok'=>true, 'job'=>sms_outbox_enqueue(sms_reply_payload($data), 'web')]);
             } catch (InvalidArgumentException $error) {
                 json_response(['ok'=>false, 'message'=>$error->getMessage()], 400);
             } catch (RuntimeException $error) {
@@ -195,6 +203,7 @@ if ($action !== '') {
 
         case 'list_calls':
             $items = read_json_array(CALLS_JSON_PATH);
+            $allIds = array_column($items, 'id');
             $items = filter_by_number($items, (string) ($_GET['number'] ?? ''));
             $items = sort_items(
                 $items,
@@ -221,12 +230,14 @@ if ($action !== '') {
                 'ok' => true,
                 'items' => $paginated['items'],
                 'meta' => $paginated['meta'],
+                'all_ids' => $allIds,
                 'csrf_token' => event_deletion_csrf_token(),
             ]);
             break;
 
         case 'list_sms':
             $items = read_json_array(SMS_JSON_PATH);
+            $allIds = array_column($items, 'id');
             $items = filter_by_number($items, (string) ($_GET['number'] ?? ''));
             $items = sort_items(
                 $items,
@@ -249,6 +260,7 @@ if ($action !== '') {
                 'ok' => true,
                 'items' => $paginated['items'],
                 'meta' => $paginated['meta'],
+                'all_ids' => $allIds,
                 'csrf_token' => event_deletion_csrf_token(),
             ]);
             break;
@@ -493,6 +505,12 @@ $appConfig = [
         .connection-screen[hidden] { display: none; }
         .connection-spinner { width: 44px; height: 44px; border: 4px solid #dbe3ee; border-top-color: #0d6efd; border-radius: 50%; margin: 0 auto 20px; animation: connection-spin 1s linear infinite; }
         @keyframes connection-spin { to { transform: rotate(360deg); } }
+        .sms-composer { max-width: 840px; }
+        .sms-chat { display:flex; flex-direction:column; gap:12px; max-height:50vh; min-height:140px; overflow:auto; padding:16px; background:#f5f7fb; border-radius:12px; }
+        .sms-bubble { max-width:88%; padding:12px 16px; border-radius:14px; overflow-wrap:anywhere; }
+        .sms-incoming { align-self:flex-start; background:white; border:1px solid #e2e6ed; }
+        .sms-outgoing { align-self:flex-end; background:#dceaff; }
+        .sms-message-text { white-space:pre-wrap; }
         .selection-cell { width: 44px; text-align: center; }
         .selection-cell input { width: 18px; height: 18px; cursor: pointer; }
         #deleteDialog { border: 0; border-radius: 12px; padding: 24px; max-width: min(480px, calc(100% - 32px)); }
@@ -532,7 +550,7 @@ $appConfig = [
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="notifications.js?v=20260920-02"></script>
-<script src="voice_calls.js?v=20260920-01"></script>
+<script src="voice_calls.js?v=20260920-02"></script>
 <script>
 (() => {
     const APP_CONFIG = <?= json_encode($appConfig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
@@ -540,7 +558,7 @@ $appConfig = [
     const state = {
         authenticated: <?= $isAuthenticated ? 'true' : 'false' ?>,
         activeMenu: 'calls',
-        outbox: {ports:[], jobs:[], connected:false, csrfToken:'', sending:false, error:'', message:'', draft:readSmsDraft() || newSmsDraft()},
+        outbox: {contextId:'', chatReady:false, canReply:false, messages:[], ports:[], jobs:[], connected:false, csrfToken:'', sending:false, error:'', message:'', draft:readSmsDraft() || newSmsDraft()},
         deleting: false,
         listEpoch: 0,
         deletionCsrf: '',
@@ -548,6 +566,7 @@ $appConfig = [
         calls: {
             items: [],
             selected: new Set(),
+            allIds: [],
             search: '',
             sortBy: 'timestamp',
             sortDirection: 'desc',
@@ -558,6 +577,7 @@ $appConfig = [
         sms: {
             items: [],
             selected: new Set(),
+            allIds: [],
             search: '',
             sortBy: 'timestamp',
             sortDirection: 'desc',
@@ -834,6 +854,7 @@ $appConfig = [
                             <dt class="col-sm-3">Дата</dt><dd class="col-sm-9">${escapeHtml(item.displayTimestamp || item.timestamp || '')}</dd>
                             <dt class="col-sm-3">Тип</dt><dd class="col-sm-9">${escapeHtml(item.type || '')}</dd>
                             <dt class="col-sm-3">Номер</dt><dd class="col-sm-9"><span class="phone-link" data-phone="${escapeHtml(item.number || '')}">${escapeHtml(item.number || '')}</span></dd>
+                            <dt class="col-sm-3">${item.type === 'входящий' ? 'На какой номер' : 'С какого номера'}</dt><dd class="col-sm-9">${escapeHtml(item.local_number || 'Не сохранён в старой записи')}${item.sim_port ? ` · SIM ${escapeHtml(item.sim_port)}` : ''}</dd>
                             <dt class="col-sm-3">Длительность</dt><dd class="col-sm-9">${escapeHtml(String(item.duration ?? ''))} сек.</dd>
                             <dt class="col-sm-3">Запись</dt>
                             <dd class="col-sm-9">
@@ -844,6 +865,7 @@ $appConfig = [
                         </dl>
                         <div class="mt-3">
                             <label class="form-label" style="font-weight:700">Транскрибация</label>
+                            ${Object.values(item.transcription_channels || {}).filter(meta=>meta.status === 'unrecognized').map(meta=>`<p class="alert alert-warning small">Канал «${escapeHtml(meta.speaker || 'без имени')}»: звуковой фрагмент обнаружен, но движок не смог распознать текст.</p>`).join('')}
                             ${renderTranscriptionThread(item.transcription)}
                         </div>
                     </div>
@@ -851,21 +873,7 @@ $appConfig = [
             `;
         }
 
-        if (state.detailView === 'sms') {
-            const item = state.detailItem;
-            return `
-                <div class="card shadow-sm">
-                    <div class="card-body">
-                        <h2 class="h5 mb-3">Детали СМС</h2>
-                        <dl class="row">
-                            <dt class="col-sm-3">Дата</dt><dd class="col-sm-9">${escapeHtml(item.displayTimestamp || item.timestamp || '')}</dd>
-                            <dt class="col-sm-3">Номер</dt><dd class="col-sm-9"><span class="phone-link" data-phone="${escapeHtml(item.number || '')}">${escapeHtml(item.number || '')}</span></dd>
-                            <dt class="col-sm-3">Текст</dt><dd class="col-sm-9"><textarea class="form-control" rows="3" readonly>${escapeHtml(item.text || '')}</textarea></dd>
-                        </dl>
-                    </div>
-                </div>
-            `;
-        }
+        if (state.detailView === 'sms') return renderSmsComposer();
 
         if (state.detailView === 'error') {
             const item = state.detailItem;
@@ -914,6 +922,7 @@ $appConfig = [
     async function loadDetail(view, id, pushState = false) {
         const response = await apiGet('get_event', { view, id });
         const hasChanged = applyDetailState(view, response.item || null);
+        if (view === 'sms') await loadSmsChat(id);
 
         if (pushState) {
             const url = new URL(window.location.href);
@@ -947,9 +956,9 @@ $appConfig = [
             const source = state[target];
             const all = app.querySelector(`[data-select-all="${target}"]`);
             if (all) {
-                all.checked = source.items.length > 0 && source.selected.size === source.items.length;
+                all.checked = source.allIds.length > 0 && source.allIds.every(id => source.selected.has(id));
                 all.indeterminate = source.selected.size > 0 && !all.checked;
-                all.disabled = state.deleting || !source.items.length;
+                all.disabled = state.deleting || !source.allIds.length;
             }
             const button = app.querySelector(`[data-delete-selected="${target}"]`);
             if (button) {
@@ -1024,7 +1033,7 @@ $appConfig = [
                         <table class="table table-hover align-middle mb-0">
                             <thead class="table-light">
                                 <tr>
-                                    <th class="selection-cell"><input type="checkbox" data-select-all="calls" aria-label="Выбрать все записи на странице" ${state.deleting ? 'disabled' : ''}></th>
+                                    <th class="selection-cell"><input type="checkbox" data-select-all="calls" aria-label="Выбрать все сохранённые записи на всех страницах, включая скрытые поиском" ${state.deleting ? 'disabled' : ''}></th>
                                     <th>
                                         <button type="button" class="header-sort sortable-header" data-sort-target="calls" data-sort-by="timestamp">
                                             Дата <span class="sort-indicator">${getSortIndicator(sortBy, sortDirection, 'timestamp')}</span>
@@ -1069,7 +1078,7 @@ $appConfig = [
                         <table class="table table-hover align-middle mb-0">
                             <thead class="table-light">
                                 <tr>
-                                    <th class="selection-cell"><input type="checkbox" data-select-all="sms" aria-label="Выбрать все записи на странице" ${state.deleting ? 'disabled' : ''}></th>
+                                    <th class="selection-cell"><input type="checkbox" data-select-all="sms" aria-label="Выбрать все сохранённые записи на всех страницах, включая скрытые поиском" ${state.deleting ? 'disabled' : ''}></th>
                                     <th>
                                         <button type="button" class="header-sort sortable-header" data-sort-target="sms" data-sort-by="timestamp">
                                             Дата <span class="sort-indicator">${getSortIndicator(sortBy, sortDirection, 'timestamp')}</span>
@@ -1151,7 +1160,8 @@ $appConfig = [
     }
 
     function renderToolbar(target) {
-        if (['settings', 'send_sms', 'voice_calls'].includes(target)) return '';
+        if (target === 'settings') return '';
+        if (['send_sms', 'voice_calls'].includes(target)) return `<button class="btn btn-outline-secondary mb-3" data-menu="${target === 'send_sms' ? 'sms' : 'calls'}" type="button">← Назад к списку</button>`;
         if (state.detailView && state.detailItem) {
             return `
                 <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
@@ -1166,6 +1176,7 @@ $appConfig = [
                 <input id="${target}Search" class="form-control" style="max-width: 320px;" placeholder="Поиск по номеру" value="${escapeHtml(source.search)}">
                 <button id="${target}SearchBtn" class="btn btn-outline-secondary" type="button">Найти</button>
                 <button id="${target}ClearBtn" class="btn btn-outline-secondary" type="button">Сбросить</button>
+                <button data-compose="${target === 'sms' ? 'send_sms' : 'voice_calls'}" class="btn btn-primary" type="button">${target === 'sms' ? 'Новая СМС' : 'Голосовой вызов'}</button>
                 <button data-delete-selected="${target}" class="btn btn-outline-danger" type="button" disabled>Удалить выбранные (0)</button>
                 <button id="${target}ReloadBtn" class="btn btn-outline-secondary ms-auto" type="button">Обновить</button>
             </div>
@@ -1203,6 +1214,7 @@ $appConfig = [
         }
 
         updateSelectionControls();
+        scrollSmsChatToEnd();
     }
 
     function renderShell() {
@@ -1215,10 +1227,8 @@ $appConfig = [
                             <button id="logoutBtn" class="btn btn-sm btn-outline-light">Выход</button>
                         </div>
                         <div class="nav nav-pills flex-column gap-2">
-                            <button class="btn ${state.activeMenu === 'calls' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="calls">Звонки</button>
-                            <button class="btn ${state.activeMenu === 'sms' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="sms">СМС</button>
-                            <button class="btn ${state.activeMenu === 'send_sms' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="send_sms">Отправить СМС</button>
-                            <button class="btn ${state.activeMenu === 'voice_calls' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="voice_calls">Голосовой вызов</button>
+                            <button class="btn ${['calls','voice_calls'].includes(state.activeMenu) ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="calls">Звонки</button>
+                            <button class="btn ${['sms','send_sms'].includes(state.activeMenu) ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="sms">СМС</button>
                             <button class="btn ${state.activeMenu === 'settings' ? 'btn-light text-dark' : 'btn-outline-light'} text-start" data-menu="settings">Настройки</button>
                         </div>
                     </aside>
@@ -1238,6 +1248,7 @@ $appConfig = [
 
         ensureDomEventBindings();
         updateSelectionControls();
+        scrollSmsChatToEnd();
     }
 
     function ensureDomEventBindings() {
@@ -1255,10 +1266,19 @@ $appConfig = [
             if (event.target.closest('#smsComposeForm')) syncSmsDraft();
         });
         app.addEventListener('click', async (event) => {
-            if (event.target.closest('#reloadSmsOutbox')) {
-                await loadSmsOutbox();
-                refreshMainArea();
-                return;
+            const compose = event.target.closest('[data-compose]');
+            if (compose) {
+                clearDetail(true);
+                state.activeMenu = compose.dataset.compose;
+                if (state.activeMenu === 'send_sms') {
+                    state.outbox.contextId = ''; state.outbox.chatReady = false; state.outbox.messages = [];
+                    state.outbox.error = ''; state.outbox.message = ''; state.outbox.draft = newSmsDraft();
+                }
+                renderShell(); await loadCurrentMenu(); refreshMainArea(); return;
+            }
+            if (event.target.closest('#changeSmsRecipient')) {
+                syncSmsDraft(); state.outbox.chatReady = false; state.outbox.messages = [];
+                state.outbox.error = ''; state.outbox.message = ''; refreshMainArea(); return;
             }
             if (state.deleting) return;
             const deleteButton = event.target.closest('[data-delete-selected]');
@@ -1413,7 +1433,7 @@ $appConfig = [
             if (checkbox) {
                 const target = checkbox.dataset.selectTarget || checkbox.dataset.selectAll;
                 if (checkbox.dataset.selectAll) {
-                    state[target].selected = new Set(checkbox.checked ? state[target].items.map(item => item.id) : []);
+                    state[target].selected = new Set(checkbox.checked ? state[target].allIds : []);
                     app.querySelectorAll(`[data-select-target="${target}"]`).forEach(input => { input.checked = checkbox.checked; });
                 } else if (checkbox.checked) {
                     state[target].selected.add(checkbox.dataset.selectId);
@@ -1469,7 +1489,8 @@ $appConfig = [
         const hasChanged = !isSamePayload(state[target].items, items) || !isSamePayload(state[target].meta, meta);
 
         state.deletionCsrf = response.csrf_token || state.deletionCsrf;
-        state[target].selected = new Set(items.map(item => item.id).filter(id => state[target].selected.has(id)));
+        state[target].allIds = response.all_ids || items.map(item => item.id);
+        state[target].selected = new Set(state[target].allIds.filter(id => state[target].selected.has(id)));
         if (meta) state[target].page = meta.page;
         state[target].items = items;
         state[target].meta = meta;
@@ -1537,7 +1558,7 @@ $appConfig = [
         const form = document.getElementById('smsComposeForm');
         if (!form) return;
         const d = state.outbox.draft;
-        const next = {sender:form.elements.sender.value, number:form.elements.number.value.trim(), text:form.elements.text.value};
+        const next = {sender:form.elements.sender.value, number:form.elements.number.value.trim(), text:form.elements.text ? form.elements.text.value : d.text};
         if (d.sender !== next.sender || d.number !== next.number || d.text !== next.text) d.request_key = crypto.randomUUID();
         Object.assign(d, next);
         saveSmsDraft();
@@ -1547,48 +1568,70 @@ $appConfig = [
     function smsStatusLabel(status) {
         return {queued:'В очереди', sending:'Отправляется', sent:'Отправлено', failed:'Ошибка', unknown:'Нет подтверждения'}[status] || status;
     }
-    function renderSmsOutboxHistory() {
-        const jobs = state.outbox.jobs;
-        return `<h2 class="h5 mt-4 mb-3">Последние отправки</h2>
-            ${jobs.length ? jobs.map(job => `<article class="card mb-2"><div class="card-body">
-                <div class="d-flex flex-wrap gap-2 justify-content-between"><strong>${escapeHtml(job.sender || 'SIM ' + job.port)} → ${escapeHtml(job.number)}</strong>
-                <span class="badge text-bg-${job.status === 'sent' ? 'success' : (job.status === 'failed' || job.status === 'unknown' ? 'warning' : 'secondary')}">${escapeHtml(smsStatusLabel(job.status))}</span></div>
-                <p class="my-2" style="white-space:pre-wrap">${escapeHtml(job.text)}</p>
-                <p class="small text-secondary mb-1">${escapeHtml(job.message)}</p>
-                <small class="text-secondary">${escapeHtml(new Date(job.created_at).toLocaleString('ru-RU'))} · ${escapeHtml({web:'Веб-интерфейс', telegram:'Telegram', email:'Email'}[job.source] || job.source)}</small>
-            </div></article>`).join('') : '<p class="text-secondary">Исходящих сообщений пока нет.</p>'}`;
+    function scrollSmsChatToEnd() {
+        const chat = document.getElementById('smsChatMessages');
+        if (chat) chat.scrollTop = chat.scrollHeight;
+    }
+    function renderSmsMessages() {
+        return state.outbox.messages.map(message => `<article class="sms-bubble ${message.direction === 'outgoing' ? 'sms-outgoing' : 'sms-incoming'}">
+            <div class="sms-message-text">${escapeHtml(message.text)}</div>
+            <div class="small text-secondary mt-2">${escapeHtml(message.timestamp)}${message.direction === 'outgoing' ? ` · ${escapeHtml(smsStatusLabel(message.status))}` : ''}</div>
+            ${['failed','unknown'].includes(message.status) ? `<div class="small text-danger">${escapeHtml(message.message || '')}</div>` : ''}
+        </article>`).join('') || '<p class="text-secondary text-center my-4">Сообщений пока нет.</p>';
     }
     function renderSmsComposer() {
         const s = state.outbox, d = s.draft;
+        const card = state.detailView === 'sms';
+        const locked = card || s.chatReady;
         const disabled = s.sending ? 'disabled' : '';
-        return `<section style="max-width:840px">
-            <div class="card shadow-sm"><div class="card-body p-4">
-                <p class="text-secondary" id="smsGatewayStatus">${s.connected ? 'Шлюз подключён' : 'Ожидание подключения шлюза. Сообщения сохраняются в очереди.'}</p>
-                <form id="smsComposeForm">
-                    <label class="form-label" for="smsSender">Отправитель</label>
-                    <select class="form-select mb-3" id="smsSender" name="sender" required ${disabled}>
-                        <option value="">Выберите SIM</option>
-                        ${s.ports.map(p=>`<option value="${p.port}" ${String(p.port) === String(d.sender) ? 'selected' : ''}>SIM ${p.port}${p.number ? ' · '+escapeHtml(p.number) : ''}</option>`).join('')}
-                    </select>
-                    <label class="form-label" for="smsRecipient">Получатель</label>
-                    <input class="form-control mb-3" id="smsRecipient" name="number" type="tel" placeholder="+79991234567" value="${escapeHtml(d.number)}" pattern="\\+?[1-9][0-9]{6,14}" required ${disabled}>
-                    <label class="form-label" for="smsMessage">Текст СМС</label>
-                    <textarea class="form-control" id="smsMessage" name="text" rows="4" required ${disabled}>${escapeHtml(d.text)}</textarea>
-                    <div class="d-flex flex-wrap justify-content-between gap-2 small text-secondary mt-1 mb-3"><span>Длинный текст может уйти несколькими СМС.</span><span id="smsByteCount">${new TextEncoder().encode(d.text).length} / 1024 байт</span></div>
-                    ${s.error ? `<div class="alert alert-danger" role="alert">${escapeHtml(s.error)}</div>` : ''}
-                    ${s.message ? `<div class="alert alert-success" role="status">${escapeHtml(s.message)}</div>` : ''}
-                    <button class="btn btn-primary" type="submit" ${s.sending || !s.csrfToken || !s.ports.length ? 'disabled' : ''}>${s.sending ? 'Сохранение…' : 'Отправить СМС'}</button>
-                    <button class="btn btn-outline-secondary ms-2" id="reloadSmsOutbox" type="button" ${disabled}>Обновить статус</button>
-                </form>
-            </div></div>
-            <div id="smsOutboxHistory">${renderSmsOutboxHistory()}</div>
-        </section>`;
+        const item = card ? state.detailItem : null;
+        const unavailable = locked && !s.canReply;
+        return `<section class="card shadow-sm sms-composer"><div class="card-body p-3 p-md-4">
+            <h2 class="h5">${card ? 'Переписка по СМС' : 'Новая СМС'}</h2>
+            ${card ? `<p class="small text-secondary">На какой номер: <strong>${escapeHtml(item.local_number || 'Не сохранён в старой записи')}</strong></p>` : ''}
+            <p class="small text-secondary" id="smsGatewayStatus">${s.connected ? 'Шлюз подключён' : 'Ожидание подключения шлюза. Сообщения сохраняются в очереди.'}</p>
+            <form id="smsComposeForm">
+                <div class="row g-3 mb-3">
+                    <div class="col-sm-5"><label class="form-label" for="smsSender">SIM отправителя</label>
+                    <select class="form-select" id="smsSender" name="sender" required ${locked ? 'disabled' : disabled}>
+                        <option value="">${card ? 'SIM не определена' : 'Выберите SIM'}</option>
+                        ${s.ports.map(p=>`<option value="${p.port}" ${String(p.port) === String(d.sender) ? 'selected' : ''}>SIM ${p.port} · ${escapeHtml(p.number)}</option>`).join('')}
+                    </select></div>
+                    <div class="col-sm-7"><label class="form-label" for="smsRecipient">Номер получателя</label>
+                    <input class="form-control" id="smsRecipient" name="number" type="tel" placeholder="+79991234567" value="${escapeHtml(d.number)}" pattern="\\+?[1-9][0-9]{6,14}" required ${locked ? 'disabled' : disabled}></div>
+                </div>
+                ${!locked ? '<p class="text-secondary">Выберите SIM и номер получателя, чтобы открыть переписку.</p>' : ''}
+                ${locked ? `<div id="smsChatMessages" class="sms-chat" aria-label="Сообщения">${renderSmsMessages()}</div>` : ''}
+                ${unavailable ? '<p class="alert alert-warning mt-3">Ответ недоступен: принимающая SIM не сохранена, больше не подключена либо отправитель использует текстовое имя. Для отправки создайте новую СМС из списка.</p>' : ''}
+                ${locked && !unavailable ? `<label class="form-label mt-3" for="smsMessage">Сообщение</label>
+                    <textarea class="form-control" id="smsMessage" name="text" rows="3" placeholder="Введите сообщение…" required ${disabled}>${escapeHtml(d.text)}</textarea>
+                    <div class="d-flex justify-content-between gap-2 small text-secondary mt-1 mb-3"><span>Длинный текст может уйти несколькими СМС.</span><span id="smsByteCount">${new TextEncoder().encode(d.text).length} / 1024 байт</span></div>` : ''}
+                ${s.error ? `<div class="alert alert-danger" role="alert">${escapeHtml(s.error)}</div>` : ''}
+                ${s.message ? `<div class="small text-success my-2" role="status">${escapeHtml(s.message)}</div>` : ''}
+                ${!unavailable ? `<button class="btn btn-primary" type="submit" ${s.sending || !s.csrfToken || !s.ports.length ? 'disabled' : ''}>${s.sending ? 'Сохранение…' : locked ? 'Отправить' : 'Открыть чат'}</button>` : ''}
+                ${s.chatReady && !card ? `<button class="btn btn-outline-secondary ms-2" type="button" id="changeSmsRecipient" ${disabled}>Другой получатель</button>` : ''}
+            </form>
+        </div></section>`;
     }
     async function loadSmsOutbox() {
-        try {
-            const response = await apiGet('get_sms_outbox');
-            Object.assign(state.outbox, {ports:response.ports, jobs:response.jobs, connected:response.connected, csrfToken:response.csrf_token});
-        } catch (error) { state.outbox.error = error.message; }
+        const response = await apiGet('get_sms_outbox');
+        Object.assign(state.outbox, {ports:response.ports, connected:response.connected, csrfToken:response.csrf_token});
+    }
+    async function loadSmsChat(id = '') {
+        const s = state.outbox;
+        const query = id ? {id} : {sender:s.draft.sender, number:s.draft.number};
+        const contextKey = id || `${query.sender}:${query.number}`;
+        const response = await apiGet('get_sms_chat', query);
+        if (id && (state.detailView !== 'sms' || state.detailItem?.id !== id)) return;
+        if (!id && (state.activeMenu !== 'send_sms' || `${s.draft.sender}:${s.draft.number}` !== contextKey)) return;
+        if (s.contextId !== contextKey) {
+            s.draft = {...newSmsDraft(), sender:String(response.sim_port || ''), number:response.number};
+            s.error = ''; s.message = ''; s.contextId = id || `${response.sim_port}:${response.number}`;
+        }
+        s.draft.sender = String(response.sim_port || ''); s.draft.number = response.number;
+        Object.assign(s, {messages:response.messages, ports:response.ports, connected:response.connected,
+            csrfToken:response.csrf_token, canReply:response.can_reply, chatReady:true});
+        saveSmsDraft();
     }
     async function submitSms(event) {
         if (event.target.id !== 'smsComposeForm') return;
@@ -1596,21 +1639,25 @@ $appConfig = [
         const s = state.outbox;
         if (s.sending) return;
         syncSmsDraft();
-        if (!s.draft.text.trim() || new TextEncoder().encode(s.draft.text).length > 1024) {
-            s.error = 'Укажите текст длиной до 1024 байт UTF-8.';
-            refreshMainArea();
-            return;
+        if (!s.chatReady) {
+            try { await loadSmsChat(); } catch (error) { s.error = error.message; }
+            refreshMainArea(); return;
         }
-        s.sending = true; s.error = ''; s.message = '';
-        refreshMainArea();
+        if (!s.canReply || !s.draft.text.trim() || new TextEncoder().encode(s.draft.text).length > 1024) {
+            s.error = 'Укажите текст длиной до 1024 байт UTF-8.'; refreshMainArea(); return;
+        }
+        const contextId = s.contextId;
+        const replyTo = state.detailView === 'sms' ? state.detailItem.id : '';
+        s.sending = true; s.error = ''; s.message = ''; refreshMainArea();
         try {
-            const response = await apiPost('send_sms', {...s.draft, csrf_token:s.csrfToken});
-            s.message = `СМС принята. Статус отправки отображается ниже.`;
-            const sender = s.draft.sender;
-            s.draft = {...newSmsDraft(), sender}; saveSmsDraft();
-            await loadSmsOutbox();
-        } catch (error) { s.error = error.message || 'Не удалось отправить СМС.'; }
-        finally { s.sending = false; if (state.activeMenu === 'send_sms') refreshMainArea(); }
+            await apiPost('send_sms', {...s.draft, reply_to:replyTo, csrf_token:s.csrfToken});
+            if (s.contextId === contextId) {
+                s.message = 'СМС принята. Статус обновится в переписке.';
+                s.draft = {...newSmsDraft(), sender:s.draft.sender, number:s.draft.number}; saveSmsDraft();
+                await loadSmsChat(replyTo);
+            }
+        } catch (error) { if (s.contextId === contextId) s.error = error.message || 'Не удалось отправить СМС.'; }
+        finally { s.sending = false; if (state.activeMenu === 'send_sms' || state.detailView === 'sms') refreshMainArea(); }
     }
 
     function renderSettings() {
@@ -1784,10 +1831,19 @@ async function pollUpdates() {
         // Poll notifications without discarding an unsaved engine selection.
         if (state.activeMenu === 'settings') return;
         if (state.activeMenu === 'voice_calls') { await SipVoiceCalls.poll(); return; }
-        if (state.activeMenu === 'send_sms') {
-            await loadSmsOutbox();
-            const history = document.getElementById('smsOutboxHistory');
-            if (history) history.innerHTML = renderSmsOutboxHistory();
+        if (state.activeMenu === 'send_sms' || state.detailView === 'sms') {
+            if (state.outbox.chatReady || state.detailView === 'sms') await loadSmsChat(state.detailView === 'sms' ? state.detailItem.id : '');
+            else await loadSmsOutbox();
+            const history = document.getElementById('smsChatMessages');
+            if (history) {
+                const html = renderSmsMessages();
+                if (history.innerHTML !== html) {
+                    const nearEnd = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
+                    const position = history.scrollTop;
+                    history.innerHTML = html;
+                    history.scrollTop = nearEnd ? history.scrollHeight : position;
+                }
+            }
             const status = document.getElementById('smsGatewayStatus');
             if (status) status.textContent = state.outbox.connected ? 'Шлюз подключён' : 'Ожидание подключения шлюза. Сообщения сохраняются в очереди.';
             return;

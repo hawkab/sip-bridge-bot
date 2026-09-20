@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto').webcrypto;
 const source = fs.readFileSync(require('node:path').join(__dirname,'../web/voice_calls.js'),'utf8');
 function setup({getUserMedia,upload}={}) {
-  const events={}, storage=new Map(), form={elements:{number:{value:'+79991111111'},mode:{value:'now'},when:{value:''}}};
+  const events={}, storage=new Map(), form={elements:{sender:{value:'2'},number:{value:'+79991111111'},mode:{value:'now'},when:{value:''}}};
   let stops=0, media, uploads=[];
   class Recorder {
     static isTypeSupported(type){ return type.includes('webm'); }
@@ -20,7 +20,7 @@ function setup({getUserMedia,upload}={}) {
     setInterval:()=>1,clearInterval(){},sessionStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)}};
   vm.runInNewContext(source,context);
   const voice=window.SipVoiceCalls;
-  voice.bind(root,{escape:s=>s,get:async()=>({jobs:[],connected:true,csrf_token:'csrf'}),post:async()=>{},active:()=>true,refresh(){},upload:async data=>{uploads.push(data);if(upload)return upload(data);return {job:{number:data.get('number'),scheduled_at:'2026-09-20T00:00:00Z'}};}});
+  voice.bind(root,{escape:s=>s,get:async()=>({ports:[{port:1,number:'+79993333333'},{port:2,number:'+79992222222'}],jobs:[],connected:true,csrf_token:'csrf'}),post:async()=>{},active:()=>true,refresh(){},upload:async data=>{uploads.push(data);if(upload)return upload(data);return {job:{number:data.get('number'),scheduled_at:'2026-09-20T00:00:00Z'}};}});
   return {voice,events,form,uploads, get stops(){return stops},get media(){return media},
     clickRecord:()=>events.click({target:{closest:selector=>selector==='#voiceRecord'?{}:null}}),
     uploadFile:()=>events.change({target:{id:'voiceFile',files:[new Blob(['test'.repeat(30)])]}}),
@@ -46,4 +46,10 @@ test('scheduled call uses explicit Moscow offset, and success clears the audio',
   const app=setup();await app.voice.load();app.form.elements.mode.value='scheduled';app.form.elements.when.value='2099-01-01T12:30';app.uploadFile();
   await app.submit();assert.equal(app.uploads[0].get('scheduled_at'),'2099-01-01T12:30:00+03:00');
   assert.doesNotMatch(app.voice.render(),/Прослушать перед отправкой/);
+});
+test('selected SIM is sent and changing it changes retry identity',async()=>{
+  const app=setup({upload:async()=>{throw new Error('lost reply')}});await app.voice.load();app.uploadFile();
+  await app.submit();app.form.elements.sender.value='1';await app.submit();
+  assert.equal(app.uploads[0].get('sender'),'2');assert.equal(app.uploads[1].get('sender'),'1');
+  assert.notEqual(app.uploads[0].get('request_key'),app.uploads[1].get('request_key'));
 });

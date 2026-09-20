@@ -216,6 +216,8 @@ $record = [
     'id' => bin2hex(random_bytes(8)),
     'timestamp' => format_timestamp_moscow($timestamp),
     'number' => $number,
+    'local_number' => preg_match('/^\+[1-9][0-9]{6,14}$/D', (string) ($data['local_number'] ?? '')) ? $data['local_number'] : '',
+    'sim_port' => filter_var($data['sim_port'] ?? null, FILTER_VALIDATE_INT, ['options'=>['min_range'=>1, 'max_range'=>32]]) ?: null,
     'text' => $decodedText,
     'transcription' => $transcription,
     'created_at' => format_timestamp_moscow(time()),

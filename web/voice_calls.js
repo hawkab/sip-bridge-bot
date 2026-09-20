@@ -2,7 +2,7 @@
 window.SipVoiceCalls = (() => {
     const MAX_BYTES = 2 * 1024 * 1024;
     let api, state = fresh(), recorder, stream, timer, started = 0, generation = 0;
-    function fresh() { return {number:'', when:'', mode:'now', blob:null, url:'', jobs:[], connected:false, csrf:'', busy:false, recording:false, starting:false, error:'', message:''}; }
+    function fresh() { return {sender:'', ports:[], number:'', when:'', mode:'now', blob:null, url:'', jobs:[], connected:false, csrf:'', busy:false, recording:false, starting:false, error:'', message:''}; }
     function escape(value) { return api.escape(String(value ?? '')); }
     function date(value) { return new Intl.DateTimeFormat('ru-RU', {timeZone:'Europe/Moscow', dateStyle:'short', timeStyle:'medium'}).format(new Date(value)) + ' МСК'; }
     function update() { if (api.active()) api.refresh(); }
@@ -13,13 +13,14 @@ window.SipVoiceCalls = (() => {
     function sync() {
         const form = document.getElementById('voiceCallForm');
         if (!form) return;
+        state.sender = form.elements.sender.value;
         state.number = form.elements.number.value.trim();
         state.mode = form.elements.mode.value;
         state.when = form.elements.when.value;
     }
     function history() {
         return state.jobs.map(job => `<article class="border rounded p-3 mb-2">
-            <div class="d-flex justify-content-between flex-wrap gap-2"><strong>${escape(job.number)}</strong><span>${escape(date(job.scheduled_at))}</span></div>
+            <div class="d-flex justify-content-between flex-wrap gap-2"><strong>${escape(job.sender || 'SIM ' + (job.port || '—'))} → ${escape(job.number)}</strong><span>${escape(date(job.scheduled_at))}</span></div>
             <div>${escape(job.message)}</div><small class="text-muted">${escape(job.source)} · ${escape(job.id)}</small>
             ${job.status === 'queued' ? `<div class="mt-2"><button type="button" class="btn btn-sm btn-outline-danger" data-cancel-voice="${escape(job.id)}">Отменить вызов</button></div>` : ''}
         </article>`).join('') || '<p class="text-muted">Вызовов пока нет.</p>';
@@ -32,6 +33,11 @@ window.SipVoiceCalls = (() => {
             ${state.error ? `<div class="alert alert-danger" role="alert">${escape(state.error)}</div>` : ''}
             ${state.message ? `<div class="alert alert-success" role="status">${escape(state.message)}</div>` : ''}
             <form id="voiceCallForm"><fieldset ${state.busy ? 'disabled' : ''}>
+            <label class="form-label" for="voiceSender">Номер отправителя</label>
+            <select id="voiceSender" name="sender" class="form-select mb-3" required>
+                <option value="">Выберите SIM</option>
+                ${state.ports.map(p=>`<option value="${p.port}" ${String(p.port) === state.sender ? 'selected' : ''}>SIM ${p.port} · ${escape(p.number)}</option>`).join('')}
+            </select>
             <label class="form-label" for="voiceNumber">Номер получателя</label>
             <input id="voiceNumber" name="number" type="tel" class="form-control mb-3" placeholder="+79991234567" pattern="\\+[1-9][0-9]{6,14}" required value="${escape(state.number)}">
             <label class="form-label" for="voiceMode">Когда позвонить</label>
@@ -51,7 +57,7 @@ window.SipVoiceCalls = (() => {
     }
     async function load() {
         const response = await api.get('get_voice_outbox');
-        state.jobs = response.jobs; state.connected = response.connected; state.csrf = response.csrf_token;
+        state.ports = response.ports || []; state.jobs = response.jobs; state.connected = response.connected; state.csrf = response.csrf_token;
     }
     async function poll() {
         await load();
@@ -114,15 +120,16 @@ window.SipVoiceCalls = (() => {
             if (state.blob.size > MAX_BYTES || state.blob.size < 32) throw new Error('Нужна аудиозапись до 2 МБ.');
             const when = state.mode === 'scheduled' ? state.when+':00+03:00' : '';
             if (when && (!state.when || !Number.isFinite(Date.parse(when)) || Date.parse(when) <= Date.now())) throw new Error('Выберите будущее время (Москва).');
+            if (!state.ports.some(p=>String(p.port) === state.sender)) { state.error = 'Выберите номер отправителя.'; update(); return; }
             state.busy = true; update();
             const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await state.blob.arrayBuffer()))].map(x => x.toString(16).padStart(2,'0')).join('');
-            const fingerprint = `${state.number}|${when}|${hash}`;
+            const fingerprint = `${state.sender}|${state.number}|${when}|${hash}`;
             let pending;
             try { pending = JSON.parse(sessionStorage.getItem('sipVoicePending') || 'null'); } catch (_) {}
             if (!pending || pending.fingerprint !== fingerprint) pending = {fingerprint, key:crypto.randomUUID()};
             try { sessionStorage.setItem('sipVoicePending', JSON.stringify(pending)); } catch (_) {}
             const body = new FormData();
-            body.set('number', state.number); body.set('scheduled_at', when); body.set('request_key', pending.key);
+            body.set('sender', state.sender); body.set('number', state.number); body.set('scheduled_at', when); body.set('request_key', pending.key);
             body.set('csrf_token', state.csrf); body.set('audio', state.blob, 'voice.audio');
             const response = await api.upload(body);
             try { sessionStorage.removeItem('sipVoicePending'); } catch (_) {}

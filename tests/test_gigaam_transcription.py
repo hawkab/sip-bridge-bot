@@ -38,6 +38,7 @@ class TranscriptionTests(unittest.TestCase):
                 payload = json.loads(transcriber.transcribe_to_json_text(path))
             self.assertEqual(payload['conversation'], [])
             self.assertEqual(payload['channels']['left']['segments_count'], 0)
+            self.assertEqual(payload['channels']['left']['status'], 'no_speech')
             self.assertTrue(payload['vad_filter'])
             self.assertEqual(payload['backend'], 'gigaam')
 
@@ -51,6 +52,19 @@ class TranscriptionTests(unittest.TestCase):
             )
         self.assertEqual(result.segments, [])
         get_model.assert_not_called()
+
+    def test_empty_decoder_result_is_distinguished_from_silence(self):
+        model = Mock()
+        model.recognize.return_value = SimpleNamespace(text='', tokens=[], timestamps=[])
+        with patch.object(gigaam, 'get_speech_timestamps', return_value=[{'start':0,'end':16000}]):
+            result = gigaam.transcribe_channel(np.ones(16000, dtype=np.float32)*.01, lambda:model,
+                speaker='S', channel_name='left', vad_min_silence_ms=500,
+                split_gap_seconds=.8, punctuation_gap_seconds=.35, max_phrase_seconds=0)
+        payload = stereo.build_output_json(input_wav=Path('fixture.wav'), model_name='test',device='cpu',compute_type='int8',
+            language='ru',vad_filter=True,vad_min_silence_ms=500,merge_gap=.15,left=result,right=result)
+        self.assertEqual(payload['conversation'], [])
+        self.assertEqual(payload['channels']['left']['status'], 'unrecognized')
+        self.assertEqual(payload['channels']['left']['speech_seconds'], 1)
 
     def test_repeated_prompts_keep_original_time_and_channel(self):
         audio = np.ones(16000 * 12, dtype=np.float32) * .01

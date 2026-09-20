@@ -75,6 +75,7 @@ def transcribe_channel(
     punctuation_gap_seconds: float, max_phrase_seconds: float,
 ) -> ChannelResult:
     rows = []
+    intervals = []
     # A silent channel must never reach the recognizer, even if VAD misbehaves.
     if audio.size and np.any(audio):
         intervals = get_speech_timestamps(audio, VadOptions(
@@ -93,4 +94,5 @@ def transcribe_channel(
                 max_phrase_seconds=max_phrase_seconds,
             ))
     # The language is fixed by the model, not detected with a measured probability.
-    return ChannelResult(speaker, channel_name, 'ru', None, rows)
+    return ChannelResult(speaker, channel_name, 'ru', None, rows,
+        sum(i['end']-i['start'] for i in intervals)/SAMPLE_RATE)

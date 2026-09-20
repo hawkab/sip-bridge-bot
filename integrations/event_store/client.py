@@ -29,13 +29,15 @@ class EventStoreClient(HostingHttpClient):
     def is_call_enabled(self) -> bool:
         return bool(self.config.EVENT_STORE_CALL_URL and self.config.EVENT_STORE_AUTH_TOKEN)
 
-    async def save_sms(self, *, timestamp: str, number: str, text: str) -> str | None:
+    async def save_sms(self, *, timestamp: str, number: str, text: str, local_number: str = '', sim_port: int | None = None) -> str | None:
         if not self.is_sms_enabled():
             return None
         payload = {
             'timestamp': timestamp,
             'number': number,
             'text': base64_encode(text),
+            'local_number': local_number,
+            'sim_port': sim_port,
         }
         result = await self._post_json(self.config.EVENT_STORE_SMS_URL, payload, 'sms')
         return result.view_url
@@ -47,9 +49,12 @@ class EventStoreClient(HostingHttpClient):
         timestamp: str,
         number: str,
         duration: int,
+        local_number: str = '',
+        sim_port: int | None = None,
         recording_path: str | None = None,
         recording_name: str | None = None,
         transcription: list[dict[str, Any]] | None = None,
+        transcription_channels: dict | None = None,
     ) -> CallStoreResult:
         if not self.is_call_enabled():
             return CallStoreResult(ok=False, error_message='call event store is disabled')
@@ -60,7 +65,11 @@ class EventStoreClient(HostingHttpClient):
                 'timestamp': timestamp,
                 'number': number,
                 'duration': str(max(0, duration)),
+                'local_number': local_number,
+                'sim_port': str(sim_port or ''),
             }
+            if transcription_channels:
+                data['transcription_channels'] = json.dumps(transcription_channels, ensure_ascii=False)
             if transcription:
                 data['transcription_json'] = json.dumps(transcription, ensure_ascii=False)
             mime_type, _ = mimetypes.guess_type(recording_name or recording_path)
@@ -80,7 +89,11 @@ class EventStoreClient(HostingHttpClient):
             'timestamp': timestamp,
             'number': number,
             'duration': max(0, duration),
+            'local_number': local_number,
+            'sim_port': sim_port,
         }
+        if transcription_channels:
+            payload['transcription_channels'] = transcription_channels
         if transcription:
             payload['transcription'] = transcription
         return await self._post_json(self.config.EVENT_STORE_CALL_URL, payload, 'call')
