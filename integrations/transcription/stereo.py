@@ -78,6 +78,65 @@ class StereoCallTranscriber:
                 logger.exception('Failed to transcribe recording: %s', path)
                 return None
 
+    async def transcribe_sample(self, path: Path, backend: str) -> dict[str, Any]:
+        if backend not in {'gigaam', 'whisper'}:
+            raise ValueError('Выберите движок распознавания.')
+        async with self._transcribe_lock:
+            # A test cannot switch the model underneath a running call, or alter
+            # the saved engine preference. Keep only one model resident in RAM.
+            previous = self._backend
+            if backend != previous:
+                self._model = None
+                self._backend = backend
+            task = asyncio.create_task(asyncio.to_thread(self._transcribe_sample_blocking, path))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task  # Keep the lock and input file until the thread exits.
+                raise
+            finally:
+                if previous != backend:
+                    self._model = None
+                    self._backend = previous
+
+    def _transcribe_sample_blocking(self, path: Path) -> dict[str, Any]:
+        ensure_ffmpeg()
+        with tempfile.TemporaryDirectory(prefix='asr_decode_') as directory:
+            wav = Path(directory) / 'mono.wav'
+            try:
+                decoded = subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-y',
+                    '-protocol_whitelist', 'file,pipe', '-format_whitelist', 'wav,mp3,mov,ogg,matroska,webm,flac,aac',
+                    '-i', str(path), '-map', '0:a:0',
+                    '-t', '301', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(wav)],
+                    capture_output=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                raise ValueError('Не удалось прочитать аудио за отведённое время.') from None
+            if decoded.returncode or not wav.is_file():
+                raise ValueError('Не удалось прочитать аудио. Выберите WAV, MP3, M4A, OGG или WebM.')
+            with wave.open(str(wav)) as source:
+                duration = source.getnframes() / source.getframerate()
+                if duration > 300:
+                    raise ValueError('Запись должна быть не длиннее 5 минут.')
+                if duration < 0.1:
+                    raise ValueError('Запись слишком короткая.')
+                samples = source.readframes(source.getnframes())
+            options = dict(speaker='', channel_name='mono',
+                vad_min_silence_ms=self.config.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS,
+                split_gap_seconds=self.config.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS,
+                punctuation_gap_seconds=self.config.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS,
+                max_phrase_seconds=self.config.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS)
+            if self._backend == 'gigaam':
+                import numpy as np
+                from integrations.transcription import gigaam
+                result = gigaam.transcribe_channel(np.frombuffer(samples, dtype='<i2').astype(np.float32)/32768,
+                    self._get_model, **options)
+            else:
+                result = transcribe_channel(self._get_model(), wav, language='ru',
+                    beam_size=self.config.CALL_TRANSCRIBE_BEAM_SIZE,
+                    vad_filter=self.config.CALL_TRANSCRIBE_VAD_FILTER, **options)
+            return {'text': ' '.join(row['text'].strip() for row in result.segments if row['text'].strip()),
+                'duration': round(duration, 2), 'speech_detected': bool(result.speech_seconds or result.segments)}
+
     def transcribe_to_json_text(self, wav_path: str | Path, indent: int = 2) -> str:
         payload = self._transcribe_blocking(Path(wav_path))
         return json.dumps(payload, ensure_ascii=False, indent=indent)

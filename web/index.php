@@ -563,7 +563,7 @@ $appConfig = [
 
     const state = {
         authenticated: <?= $isAuthenticated ? 'true' : 'false' ?>,
-        activeMenu: 'calls',
+        activeMenu: new URL(window.location.href).searchParams.get('page') === 'settings' ? 'settings' : 'calls',
         outbox: {contextId:'', chatEpoch:0, chatReady:false, canReply:false, senderSelectable:false, messages:[], ports:[], jobs:[], connected:false, csrfToken:'', sending:false, error:'', message:'', draft:readSmsDraft() || newSmsDraft()},
         deleting: false,
         listEpoch: 0,
@@ -1288,6 +1288,11 @@ $appConfig = [
             if (event.target.closest('#smsComposeForm')) syncSmsDraft();
         });
         app.addEventListener('click', async (event) => {
+            if (event.target.closest('#testTranscription')) {
+                const url = new URL('transcription_test.php', APP_CONFIG.appUrl);
+                url.searchParams.set('backend', state.settings.backend);
+                window.location.assign(url.toString()); return;
+            }
             const compose = event.target.closest('[data-compose]');
             if (compose) {
                 clearDetail(true);
@@ -1712,8 +1717,9 @@ $appConfig = [
                 ${s.loading ? '<p role="status">Загрузка настроек…</p>' : ''}
                 ${s.error ? `<div class="alert alert-danger" role="alert">${escapeHtml(s.error)}</div>` : ''}
                 ${s.message ? `<div class="alert alert-success" role="status">${escapeHtml(s.message)}</div>` : ''}
-                <div class="d-flex gap-2">
+                <div class="d-flex gap-2 flex-wrap">
                     <button id="saveTranscriptionSettings" class="btn btn-primary" type="button" ${canSaveSettings() ? '' : 'disabled'}>${s.saving ? 'Сохранение…' : 'Сохранить'}</button>
+                    <button id="testTranscription" class="btn btn-outline-primary" style="min-height:48px" type="button" ${s.loading || s.saving || !s.csrfToken ? 'disabled' : ''}>Проверить качество</button>
                 </div>
             </div>
         </section>`;
@@ -2008,6 +2014,7 @@ async function pollUpdates() {
         await loadCalls();
         await loadSms();
         await bootstrapKnownIds();
+        if (state.activeMenu === 'settings') await loadSettings();
 
         if (APP_CONFIG.initialView && APP_CONFIG.initialId) {
             try {

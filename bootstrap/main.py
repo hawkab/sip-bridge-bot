@@ -19,6 +19,8 @@ from integrations.event_store.voice_outbox import VoiceOutboxClient
 from integrations.asterisk.voice_calls import AsteriskVoiceCalls
 from workers.voice_outbox import VoiceOutboxWorker
 from workers.voice_recordings import VoiceRecordingWorker
+from integrations.event_store.transcription_test import TranscriptionTestClient
+from workers.transcription_test import TranscriptionTestWorker
 from services.delivery_service import DeliveryHub
 from services.event_router import send_startup_notification, start_cdr_monitor
 from services.system_ops import get_app_version_text
@@ -40,12 +42,15 @@ async def run_bot(http) -> None:
     voice_outbox = VoiceOutboxClient(CONFIG, http)
     command_service = CommandService(ys, sms_outbox, voice_outbox)
     transcriber = StereoCallTranscriber(CONFIG, http)
+    transcription_tests = TranscriptionTestClient(CONFIG, http)
     transcription_pdf_renderer = LazyTranscriptionPdfRenderer(CONFIG)
 
     tasks = []
     try:
         tasks.append(await start_ys_reader(ys, delivery, event_store))
         tasks.append(await start_cdr_monitor(delivery, event_store, transcriber, transcription_pdf_renderer))
+        if transcription_tests.enabled:
+            tasks.append(asyncio.create_task(TranscriptionTestWorker(transcription_tests, transcriber).run_forever(), name="transcription-tests"))
         tasks.append(asyncio.create_task(run_telegram_transport(ys, delivery, command_service), name="telegram-transport"))
 
         if sms_outbox.enabled:
