@@ -51,18 +51,25 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
             path.write_text('This is not audio')
             with self.assertRaisesRegex(ValueError,'прочитать аудио'): await transcriber.transcribe_sample(path,'gigaam')
 
-    async def test_whisper_uses_same_call_parameters(self):
+    async def test_both_engines_keep_phrase_timestamps_and_call_parameters(self):
         transcriber = StereoCallTranscriber(config())
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'sample.wav'
             with wave.open(str(path),'wb') as wav:
                 wav.setparams((2,2,8000,0,'NONE','not compressed')); wav.writeframes(b'\0'*32000)
-            result = SimpleNamespace(segments=[{'text':'Тест.'}],speech_seconds=.5)
-            with patch.object(transcriber,'_get_model',return_value=object()), patch('integrations.transcription.stereo.transcribe_channel',return_value=result) as recognize:
-                response=await transcriber.transcribe_sample(path,'whisper')
-            self.assertEqual(response['text'],'Тест.')
-            self.assertTrue(recognize.call_args.kwargs['vad_filter'])
-            self.assertEqual(recognize.call_args.kwargs['language'],'ru')
+            result = SimpleNamespace(segments=[
+                {'start_hms':'00:00:01.250', 'text':' Первая реплика. '},
+                {'start_hms':'00:00:02.000', 'text':'   '},
+                {'start_hms':'01:02:03.450', 'text':'Вторая реплика.'},
+            ],speech_seconds=.5)
+            for backend, module in [('whisper', 'stereo'), ('gigaam', 'gigaam')]:
+                with self.subTest(backend=backend), patch.object(transcriber,'_get_model',return_value=object()), patch(f'integrations.transcription.{module}.transcribe_channel',return_value=result) as recognize:
+                    response=await transcriber.transcribe_sample(path,backend)
+                self.assertEqual(response['text'],'[00:00:01.250] Первая реплика.\n[01:02:03.450] Вторая реплика.')
+                self.assertEqual(recognize.call_args.kwargs['split_gap_seconds'], .8)
+                if backend == 'whisper':
+                    self.assertTrue(recognize.call_args.kwargs['vad_filter'])
+                    self.assertEqual(recognize.call_args.kwargs['language'],'ru')
 
     async def test_completion_retry_does_not_repeat_recognition_and_removes_local_audio(self):
         client = SimpleNamespace(request=AsyncMock(), download=AsyncMock(return_value=b'audio'))

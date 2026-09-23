@@ -20,11 +20,13 @@ try {
     check($claim['id']===$id,'Claim');
     check(asr_test_worker(['action'=>'claim'])['job']===null,'Only one in flight');
     check(!isset(asr_test_get($id)['job']['claim_token']),'Private claim token');
-    $result = ['action'=>'complete','id'=>$id,'claim_token'=>$claim['claim_token'],'status'=>'completed','text'=>'Проверка речи.','speech_detected'=>true,'duration'=>3.1,'elapsed'=>2.4];
+    $text = "[00:00:00.250] Проверка речи.\n[00:00:02.000] Вторая реплика.";
+    $result = ['action'=>'complete','id'=>$id,'claim_token'=>$claim['claim_token'],'status'=>'completed','text'=>$text,'speech_detected'=>true,'duration'=>3.1,'elapsed'=>2.4];
     invalid(fn()=>asr_test_worker(array_replace($result,['claim_token'=>'bad'])));
     check(is_file(DATA_STORAGE_DIR.'/transcription-tests/'.$id.'.audio'),'Audio kept until completion');
-    check(asr_test_worker($result)['job']['text']==='Проверка речи.','Text saved');
-    check(asr_test_worker($result)['job']['text']==='Проверка речи.','Idempotent completion');
+    check(asr_test_worker($result)['job']['text']===$text,'Timestamped lines saved');
+    check(asr_test_worker($result)['job']['text']===$text,'Idempotent completion');
+    check(asr_test_get($id)['job']['text']===$text,'Timestamped lines returned to browser');
     check(!is_file(DATA_STORAGE_DIR.'/transcription-tests/'.$id.'.audio'),'Audio released');
     check(asr_test_enqueue($data,$audio)['job']['status']==='completed','Uncertain upload retry does not repeat ASR');
     $path = DATA_STORAGE_DIR.'/transcription-tests/jobs.json';

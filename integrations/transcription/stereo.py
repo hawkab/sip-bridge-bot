@@ -132,7 +132,8 @@ class StereoCallTranscriber:
                 result = transcribe_channel(self._get_model(), wav, language='ru',
                     beam_size=self.config.CALL_TRANSCRIBE_BEAM_SIZE,
                     vad_filter=self.config.CALL_TRANSCRIBE_VAD_FILTER, **options)
-            return {'text': ' '.join(row['text'].strip() for row in result.segments if row['text'].strip()),
+            return {'text': '\n'.join(f"[{row['start_hms']}] {row['text'].strip()}"
+                                     for row in result.segments if row['text'].strip()),
                 'duration': round(duration, 2), 'speech_detected': bool(result.speech_seconds or result.segments)}
 
     def transcribe_to_json_text(self, wav_path: str | Path, indent: int = 2) -> str:
