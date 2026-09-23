@@ -57,7 +57,8 @@ try {
     sms_outbox_heartbeat(['connected'=>true,'ports'=>[['port'=>1,'number'=>'+79990000009'],['port'=>2,'number'=>'+79990000001']]]);
     check(sms_chat(['id'=>'one'])['sim_port'] === 2, 'Follow number after SIM moves ports');
     invalid(fn()=>sms_reply_payload($request + ['reply_to'=>'one']));
-    check(sms_chat(['id'=>'two','sender'=>'1'])['sim_port'] === 1, 'Allow explicit replacement when receiving SIM disconnected');
+    check(!sms_chat(['id'=>'two','sender'=>'1'])['can_reply'] && !sms_chat(['id'=>'two'])['sender_selectable'], 'Disconnected known SIM cannot be replaced inside another SIM chat');
+    invalid(fn()=>sms_reply_payload(array_replace($request,['reply_to'=>'two'])));
     $records = read_json_array(SMS_JSON_PATH);
     foreach (['utc'=>'2026-09-19T22:01:02Z', 'bad'=>'invalid timestamp', 'empty'=>''] as $id=>$timestamp) {
         $records[] = array_replace($records[0], ['id'=>$id, 'timestamp'=>$timestamp]);

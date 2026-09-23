@@ -193,7 +193,8 @@ if ($action !== '') {
                 json_response(['ok' => false, 'message' => 'Укажите тип и список записей.'], 400);
             }
             try {
-                json_response(['ok' => true] + delete_event_records($data['kind'], $data['ids']));
+                $chatDeletion = $data['kind'] === 'sms' && count(array_filter($data['ids'], static fn($id): bool => is_string($id) && str_starts_with($id, 'chat-'))) > 0;
+                json_response(['ok' => true] + ($chatDeletion ? delete_sms_chats($data['ids']) : delete_event_records($data['kind'], $data['ids'])));
             } catch (InvalidArgumentException $error) {
                 json_response(['ok' => false, 'message' => $error->getMessage()], 400);
             } catch (RuntimeException $error) {
@@ -236,9 +237,9 @@ if ($action !== '') {
             break;
 
         case 'list_sms':
-            $items = read_json_array(SMS_JSON_PATH);
+            $items = sms_chat_summaries();
             $allIds = array_column($items, 'id');
-            $items = filter_events($items, (string) ($_GET['number'] ?? ''), 'sms');
+            if (trim((string) ($_GET['number'] ?? '')) !== '') $items = sms_chat_summaries(trim((string) $_GET['number']));
             $items = sort_items(
                 $items,
                 (string) ($_GET['sortBy'] ?? 'timestamp'),
@@ -294,7 +295,7 @@ if ($action !== '') {
                     ], 404);
             }
 
-            $item = find_record_by_id($path, $id);
+            $item = $view === 'sms' ? sms_chat_record($id) : find_record_by_id($path, $id);
             if ($item === null) {
                 json_response([
                     'ok' => false,
@@ -967,7 +968,7 @@ $appConfig = [
 
     function renderRowCheckbox(target, item) {
         return `<input type="checkbox" data-select-target="${target}" data-select-id="${escapeHtml(item.id || '')}"
-            aria-label="Выбрать ${target === 'calls' ? 'звонок' : 'СМС'} ${escapeHtml(item.number || '')} ${escapeHtml(item.displayTimestamp || item.timestamp || '')}"
+            aria-label="Выбрать ${target === 'calls' ? 'звонок' : 'чат'} ${escapeHtml(item.number || '')} ${target === 'sms' ? escapeHtml(item.sim_port ? `SIM ${item.sim_port} ${item.local_number || ''}` : 'SIM не определена') : ''} ${escapeHtml(item.displayTimestamp || item.timestamp || '')}"
             ${state[target].selected.has(item.id) ? 'checked' : ''} ${state.deleting ? 'disabled' : ''}>`;
     }
 
@@ -992,8 +993,8 @@ $appConfig = [
         const dialog = document.createElement('dialog');
         dialog.id = 'deleteDialog';
         dialog.setAttribute('aria-labelledby', 'deleteTitle');
-        dialog.innerHTML = `<h2 id="deleteTitle" class="h5">Удалить выбранные ${kind === 'calls' ? 'звонки' : 'СМС'}?</h2>
-            <p>Количество записей: ${count}. ${kind === 'calls' ? 'Их аудиозаписи также будут удалены. ' : ''}Отменить удаление нельзя.</p>
+        dialog.innerHTML = `<h2 id="deleteTitle" class="h5">Удалить выбранные ${kind === 'calls' ? 'звонки' : 'чаты'}?</h2>
+            <p>${kind === 'calls' ? 'Количество записей' : 'Количество чатов'}: ${count}. ${kind === 'calls' ? 'Их аудиозаписи также будут удалены. ' : 'Будут удалены все сообщения в выбранных переписках. '}Отменить удаление нельзя.</p>
             <form method="dialog" class="d-flex gap-2 justify-content-end">
                 <button value="cancel" class="btn btn-outline-secondary" autofocus>Отмена</button>
                 <button value="delete" class="btn btn-danger">Удалить</button>
@@ -1023,7 +1024,7 @@ $appConfig = [
             state[kind].selected.clear();
             await loadTarget(kind);
             await bootstrapKnownIds();
-            showToast(`Удалено записей: ${response.deleted_ids.length}.` + (response.recording_cleanup_failed ? ' Не удалось удалить часть аудиофайлов с диска.' : ''), !!response.recording_cleanup_failed);
+            showToast(`Удалено ${kind === 'calls' ? 'записей' : 'чатов'}: ${response.deleted_ids.length}.` + (response.recording_cleanup_failed ? ' Не удалось удалить часть аудиофайлов с диска.' : ''), !!response.recording_cleanup_failed);
         } catch (error) {
             showToast(error.message || 'Не удалось удалить записи', true);
         } finally {
@@ -1086,8 +1087,10 @@ $appConfig = [
             <tr class="${item.isRecent ? 'recent-row' : ''}">
                 <td class="selection-cell">${renderRowCheckbox('sms', item)}</td>
                 <td><span class="phone-link" data-detail-view="sms" data-detail-id="${escapeHtml(item.id || '')}">${escapeHtml(item.displayTimestamp || item.timestamp || '')}</span></td>
-                <td><span class="phone-link" data-phone="${escapeHtml(item.number || '')}">${escapeHtml(item.number || '')}</span></td>
-                <td>${escapeHtml(item.preview || '')}</td>
+                <td><button type="button" class="btn btn-link p-0 text-start" style="min-height:44px" data-detail-view="sms" data-detail-id="${escapeHtml(item.id || '')}">${escapeHtml(item.number || '')}</button>
+                    <span class="badge text-bg-light" aria-label="Количество сообщений">${escapeHtml(item.message_count || 1)}</span></td>
+                <td><span class="text-nowrap">${item.sim_port ? `SIM ${escapeHtml(item.sim_port)}` : 'SIM не определена'}</span><div class="small text-secondary text-nowrap">${escapeHtml(item.local_number || 'Номер неизвестен')}</div></td>
+                <td><button type="button" class="btn p-0 text-start" style="min-height:44px" data-detail-view="sms" data-detail-id="${escapeHtml(item.id || '')}">${item.direction === 'outgoing' ? 'Вы: ' : ''}${escapeHtml(item.preview || '')}</button></td>
             </tr>
         `).join('');
 
@@ -1098,7 +1101,7 @@ $appConfig = [
                         <table class="table table-hover align-middle mb-0">
                             <thead class="table-light">
                                 <tr>
-                                    <th class="selection-cell"><input type="checkbox" data-select-all="sms" aria-label="Выбрать все сохранённые записи на всех страницах, включая скрытые поиском" ${state.deleting ? 'disabled' : ''}></th>
+                                    <th class="selection-cell"><input type="checkbox" data-select-all="sms" aria-label="Выбрать все чаты на всех страницах, включая скрытые поиском" ${state.deleting ? 'disabled' : ''}></th>
                                     <th>
                                         <button type="button" class="header-sort sortable-header" data-sort-target="sms" data-sort-by="timestamp">
                                             Дата <span class="sort-indicator">${getSortIndicator(sortBy, sortDirection, 'timestamp')}</span>
@@ -1109,11 +1112,12 @@ $appConfig = [
                                             Номер <span class="sort-indicator">${getSortIndicator(sortBy, sortDirection, 'number')}</span>
                                         </button>
                                     </th>
-                                    <th>Текст</th>
+                                    <th>SIM</th>
+                                    <th>Последнее сообщение</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${rows || '<tr><td colspan="4" class="text-center text-muted py-4">Нет данных</td></tr>'}
+                                ${rows || '<tr><td colspan="5" class="text-center text-muted py-4">Нет переписок</td></tr>'}
                             </tbody>
                         </table>
                     </div>
