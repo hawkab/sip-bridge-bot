@@ -107,7 +107,7 @@ class StereoCallTranscriber:
                 decoded = subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-y',
                     '-protocol_whitelist', 'file,pipe', '-format_whitelist', 'wav,mp3,mov,ogg,matroska,webm,flac,aac',
                     '-i', str(path), '-map', '0:a:0',
-                    '-t', '301', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(wav)],
+                    '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(wav)],
                     capture_output=True, timeout=60)
             except subprocess.TimeoutExpired:
                 raise ValueError('Не удалось прочитать аудио за отведённое время.') from None
@@ -115,8 +115,6 @@ class StereoCallTranscriber:
                 raise ValueError('Не удалось прочитать аудио. Выберите WAV, MP3, M4A, OGG или WebM.')
             with wave.open(str(wav)) as source:
                 duration = source.getnframes() / source.getframerate()
-                if duration > 300:
-                    raise ValueError('Запись должна быть не длиннее 5 минут.')
                 if duration < 0.1:
                     raise ValueError('Запись слишком короткая.')
                 samples = source.readframes(source.getnframes())

@@ -53,7 +53,7 @@ session_write_close();
             <span class="drop-hint">Перетащите аудио сюда</span>
             <label class="file-button" for="audioFile">Выбрать файл</label>
             <input id="audioFile" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm,.flac,.aac,.opus">
-            <span class="hint">До 5 минут · <?= htmlspecialchars((string) (floor($maxBytes/1048576*10)/10)) ?> МБ</span>
+            <span class="hint">До <?= htmlspecialchars((string) (floor($maxBytes/1048576*10)/10)) ?> МБ</span>
         </div>
         <div id="preview" hidden><p id="filename"></p><audio id="player" controls preload="metadata"></audio></div>
         <button id="transcribe" class="primary" type="button" disabled>Распознать</button>

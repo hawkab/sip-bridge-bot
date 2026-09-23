@@ -37,20 +37,17 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transcriber._backend, 'gigaam')
         self.assertFalse(transcriber._transcribe_lock.locked())
 
-    async def test_real_decoder_silence_invalid_file_and_duration_limit(self):
+    async def test_real_decoder_accepts_long_audio_and_rejects_invalid_file(self):
         transcriber = StereoCallTranscriber(config())
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'sample.wav'
-            for seconds in [1,301]:
+            for seconds in [1,601]:
                 with wave.open(str(path),'wb') as wav:
                     wav.setparams((1,2,16000,0,'NONE','not compressed'))
                     wav.writeframes(b'\0\0'*16000*seconds)
-                if seconds == 301:
-                    with self.assertRaisesRegex(ValueError,'5 минут'): await transcriber.transcribe_sample(path,'gigaam')
-                else:
-                    with patch.object(transcriber,'_get_model',side_effect=AssertionError('No model on silence')):
-                        result = await transcriber.transcribe_sample(path,'gigaam')
-                    self.assertEqual(result, {'text':'','duration':1.0,'speech_detected':False})
+                with patch.object(transcriber,'_get_model',side_effect=AssertionError('No model on silence')):
+                    result = await transcriber.transcribe_sample(path,'gigaam')
+                self.assertEqual(result, {'text':'','duration':float(seconds),'speech_detected':False})
             path.write_text('This is not audio')
             with self.assertRaisesRegex(ValueError,'прочитать аудио'): await transcriber.transcribe_sample(path,'gigaam')
 

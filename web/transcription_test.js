@@ -52,7 +52,6 @@
             timer = setInterval(() => {
                 const sec = Math.floor((Date.now()-began)/1000);
                 el('timer').textContent = `${Math.floor(sec/60)}:${String(sec%60).padStart(2,'0')}`;
-                if (sec >= 300) stopRecord();
             }, 500);
         } catch (error) {
             stopTracks(); message('error', error.name === 'NotAllowedError' ? 'Разрешите доступ к микрофону или выберите файл.' : error.message || 'Микрофон недоступен.');
