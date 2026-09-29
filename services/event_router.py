@@ -16,7 +16,8 @@ from services.formatters.transcription import format_transcription
 
 async def handle_cdr_group_notification(delivery: DeliveryHub, event_store: EventStoreClient, transcriber, transcription_pdf_renderer, rows: list[dict]) -> None:
     event = CdrGroupEvent(rows=rows)
-    msg = format_cdr_group(event.rows)
+    identity = call_identity(event_store.config, event.rows)
+    msg = format_cdr_group(event.rows, local_number=identity['local_number'])
     if not msg:
         return
 

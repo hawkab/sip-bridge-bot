@@ -1,18 +1,18 @@
 from datetime import datetime
 
 
-def format_single_cdr(row: dict) -> str:
+def format_single_cdr(row: dict, *, local_number: str = '') -> str:
     lines = []
     if row.get("src"):
         lines.append(f"От: `{row['src']}`")
     if row.get("dst"):
-        lines.append(f"Кому: `{row['dst']}`")
+        lines.append(f"Кому: {_format_recipient(row, local_number)}")
     if row.get("start"):
-        lines.append(f"Начало: `{row['start']}`")
+        lines.append(f"Начало: `{_format_datetime(row['start'])}`")
     if row.get("answer"):
-        lines.append(f"Ответ: `{row['answer']}`")
+        lines.append(f"Ответ: `{_format_datetime(row['answer'])}`")
     if row.get("end"):
-        lines.append(f"Конец: `{row['end']}`")
+        lines.append(f"Конец: `{_format_datetime(row['end'])}`")
     if row.get("duration"):
         lines.append(f"Длительность (сек): `{row['duration']}`")
     if row.get("billsec"):
@@ -25,31 +25,26 @@ def format_single_cdr(row: dict) -> str:
     return "📞 *Звонок (CDR)*\n" + "\n".join(lines)
 
 
-def format_cdr_group(rows: list[dict]) -> str:
+def format_cdr_group(rows: list[dict], *, local_number: str = '') -> str:
     if not rows:
         return ""
     if len(rows) == 1:
-        return format_single_cdr(rows[0])
+        return format_single_cdr(rows[0], local_number=local_number)
 
     first = rows[0]
     src = first.get('src', '?')
-    dst = first.get('dst', '?')
     context = first.get('dcontext', '')
 
     if 'inbound-gsm' in context:
         direction = "Входящий с GSM"
-        caller = src
-        callee = dst
     else:
         direction = "Исходящий на GSM"
-        caller = src
-        callee = dst
 
-    lines = [f"📞 *{direction}*", f"От: `{caller}` → `{callee}`", ""]
+    lines = [f"📞 *{direction}*", f"От: `{src}`", f"Кому: {_format_recipient(first, local_number)}", ""]
     last_disp = ""
     for row in rows:
-        start_time = _short_time(row.get('start', ''))
-        end_time = _short_time(row.get('end', ''))
+        start_time = _format_datetime(row.get('start', ''))
+        end_time = _format_datetime(row.get('end', ''))
         duration = row.get('duration', '0')
         last_disp = _translate_disposition(row.get('disposition', ''))
         lines.append(f"{start_time} - {end_time} ({duration}с) {last_disp}")
@@ -60,13 +55,20 @@ def format_cdr_group(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _short_time(value: str) -> str:
+def _format_recipient(row: dict, local_number: str) -> str:
+    destination = row.get('dst') or '?'
+    if local_number and 'inbound-gsm' in str(row.get('dcontext', '')):
+        return f"`{local_number}` (`{destination}`)"
+    return f"`{destination}`"
+
+
+def _format_datetime(value: str) -> str:
     if not value:
         return ""
     try:
-        dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
-        return dt.strftime("%H:%M:%S")
-    except Exception:
+        dt = datetime.fromisoformat(value)
+        return dt.strftime("%H:%M:%S %d.%m.%Y")
+    except (ValueError, TypeError):
         return value
 
 

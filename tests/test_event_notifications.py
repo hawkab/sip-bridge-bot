@@ -7,8 +7,9 @@ for key in ('BOT_TOKEN', 'ADMIN_LOGIN', 'TG_HOST', 'TG_USER', 'TG_PASS'):
     os.environ.setdefault(key, 'test')
 
 from integrations.tg200.client import SmsSendResult
+from integrations.event_store.client import CallStoreResult
 from services.delivery_service import DeliveryHub
-from services.event_router import handle_sms_notification
+from services.event_router import handle_cdr_group_notification, handle_sms_notification
 from workers.sms_outbox import SmsOutboxWorker
 from workers.voice_outbox import VoiceOutboxWorker
 
@@ -18,11 +19,49 @@ class EventNotificationTests(unittest.IsolatedAsyncioTestCase):
         self.config = SimpleNamespace(SMS_SIM_PORTS=[
             {'port': 1, 'number': '+79990000001'},
             {'port': 2, 'number': '+79990000002'},
-        ])
+        ], CALL_GSM_INBOUND_DIDS={'1001': 1, '1002': 2})
         self.delivery = DeliveryHub(self.config)
         self.delivery._notify_telegram = AsyncMock()
         self.delivery._notify_email = AsyncMock()
         self.store = SimpleNamespace(config=self.config, save_sms=AsyncMock(return_value='https://example.test/sms'))
+        self.store.save_call = AsyncMock(return_value=CallStoreResult(ok=True, view_url='https://example.test/call'))
+
+    async def test_call_notifications_use_same_sim_as_storage_and_readable_dates_in_both_channels(self):
+        row = {'src': '+79991111111', 'dcontext': 'inbound-gsm',
+               'start': '2026-09-29 08:19:12', 'answer': '2026-09-29 08:19:13',
+               'end': '2026-09-29 08:19:26', 'duration': '14', 'billsec': '13', 'disposition': 'ANSWERED'}
+        for port in (1, 2):
+            with self.subTest(port=port):
+                recipient = self.config.SMS_SIM_PORTS[port - 1]['number']
+                await handle_cdr_group_notification(self.delivery, self.store, None, None, [{**row, 'dst': f'100{port}'}])
+                for text in (self.delivery._notify_telegram.call_args.args[0], self.delivery._notify_email.call_args.args[1]):
+                    self.assertIn(f'Кому: `{recipient}` (`100{port}`)', text)
+                    self.assertIn('Начало: `08:19:12 29.09.2026`', text)
+                    self.assertIn('Ответ: `08:19:13 29.09.2026`', text)
+                    self.assertIn('Конец: `08:19:26 29.09.2026`', text)
+                self.assertEqual(self.store.save_call.call_args.kwargs['local_number'], recipient)
+                self.assertEqual(self.store.save_call.call_args.kwargs['timestamp'], row['start'])
+
+    async def test_call_group_keeps_dates_across_midnight(self):
+        row = {'src': '+79991111111', 'dst': '1002', 'dcontext': 'inbound-gsm',
+               'start': '2026-09-28 23:59:58', 'end': '2026-09-29 00:00:12',
+               'duration': '14', 'billsec': '0', 'disposition': 'NO ANSWER'}
+        await handle_cdr_group_notification(self.delivery, self.store, None, None,
+            [row, {**row, 'start': '2026-09-29 00:00:15', 'end': '2026-09-29 00:00:29'}])
+        for text in (self.delivery._notify_telegram.call_args.args[0], self.delivery._notify_email.call_args.args[1]):
+            self.assertIn('Кому: `+79990000002` (`1002`)', text)
+            self.assertIn('23:59:58 28.09.2026 - 00:00:12 29.09.2026', text)
+            self.assertIn('00:00:15 29.09.2026 - 00:00:29 29.09.2026', text)
+
+    async def test_unknown_and_outgoing_call_destinations_are_not_replaced_with_own_sim(self):
+        base = {'src': '1001', 'start': '2026-09-29 08:19:12', 'duration': '14', 'disposition': 'NO ANSWER'}
+        for fields in ({'dcontext': 'inbound-gsm', 'dst': 's'},
+                       {'dcontext': 'outbound-gsm', 'dst': '+79991111111', 'userfield': 'sim_port=2'}):
+            with self.subTest(fields=fields):
+                await handle_cdr_group_notification(self.delivery, self.store, None, None, [{**base, **fields}])
+                text = self.delivery._notify_telegram.call_args.args[0]
+                self.assertIn(f"Кому: `{fields['dst']}`\n", text)
+                self.assertNotIn('+79990000002', text)
 
     async def test_incoming_sms_uses_receiving_number_in_notification_and_storage(self):
         for port in (1, 2):
