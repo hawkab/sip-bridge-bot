@@ -4,7 +4,7 @@ from datetime import datetime
 def format_single_cdr(row: dict, *, local_number: str = '') -> str:
     lines = []
     if row.get("src"):
-        lines.append(f"От: `{row['src']}`")
+        lines.append(f"От: {_format_sender(row, local_number)}")
     if row.get("dst"):
         lines.append(f"Кому: {_format_recipient(row, local_number)}")
     if row.get("start"):
@@ -32,7 +32,6 @@ def format_cdr_group(rows: list[dict], *, local_number: str = '') -> str:
         return format_single_cdr(rows[0], local_number=local_number)
 
     first = rows[0]
-    src = first.get('src', '?')
     context = first.get('dcontext', '')
 
     if 'inbound-gsm' in context:
@@ -40,7 +39,7 @@ def format_cdr_group(rows: list[dict], *, local_number: str = '') -> str:
     else:
         direction = "Исходящий на GSM"
 
-    lines = [f"📞 *{direction}*", f"От: `{src}`", f"Кому: {_format_recipient(first, local_number)}", ""]
+    lines = [f"📞 *{direction}*", f"От: {_format_sender(first, local_number)}", f"Кому: {_format_recipient(first, local_number)}", ""]
     last_disp = ""
     for row in rows:
         start_time = _format_datetime(row.get('start', ''))
@@ -53,6 +52,13 @@ def format_cdr_group(rows: list[dict], *, local_number: str = '') -> str:
     lines.append("")
     lines.append(f"Итог: {final_status} (попыток: {len(rows)})")
     return "\n".join(lines)
+
+
+def _format_sender(row: dict, local_number: str) -> str:
+    source = row.get('src') or '?'
+    if local_number and local_number != source and 'inbound-gsm' not in str(row.get('dcontext', '')):
+        return f"`{local_number}` (`{source}`)"
+    return f"`{source}`"
 
 
 def _format_recipient(row: dict, local_number: str) -> str:

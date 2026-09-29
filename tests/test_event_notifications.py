@@ -35,6 +35,7 @@ class EventNotificationTests(unittest.IsolatedAsyncioTestCase):
                 recipient = self.config.SMS_SIM_PORTS[port - 1]['number']
                 await handle_cdr_group_notification(self.delivery, self.store, None, None, [{**row, 'dst': f'100{port}'}])
                 for text in (self.delivery._notify_telegram.call_args.args[0], self.delivery._notify_email.call_args.args[1]):
+                    self.assertIn('От: `+79991111111`\n', text)
                     self.assertIn(f'Кому: `{recipient}` (`100{port}`)', text)
                     self.assertIn('Начало: `08:19:12 29.09.2026`', text)
                     self.assertIn('Ответ: `08:19:13 29.09.2026`', text)
@@ -53,15 +54,20 @@ class EventNotificationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('23:59:58 28.09.2026 - 00:00:12 29.09.2026', text)
             self.assertIn('00:00:15 29.09.2026 - 00:00:29 29.09.2026', text)
 
-    async def test_unknown_and_outgoing_call_destinations_are_not_replaced_with_own_sim(self):
+    async def test_outgoing_calls_show_actual_sim_at_sender_and_keep_remote_recipient(self):
         base = {'src': '1001', 'start': '2026-09-29 08:19:12', 'duration': '14', 'disposition': 'NO ANSWER'}
-        for fields in ({'dcontext': 'inbound-gsm', 'dst': 's'},
-                       {'dcontext': 'outbound-gsm', 'dst': '+79991111111', 'userfield': 'sim_port=2'}):
-            with self.subTest(fields=fields):
-                await handle_cdr_group_notification(self.delivery, self.store, None, None, [{**base, **fields}])
-                text = self.delivery._notify_telegram.call_args.args[0]
-                self.assertIn(f"Кому: `{fields['dst']}`\n", text)
-                self.assertNotIn('+79990000002', text)
+        cases = [({'dcontext': 'inbound-gsm', 'dst': 's'}, '`1001`'),
+                 ({'dcontext': 'internal-calls', 'dst': '+79991111111'}, '`1001`')]
+        for port in (1, 2):
+            cases.append(({'dcontext': 'internal-calls', 'dst': '+79991111111', 'userfield': f'sim_port={port}'},
+                          f"`{self.config.SMS_SIM_PORTS[port - 1]['number']}` (`1001`)"))
+        for fields, sender in cases:
+            for attempts in (1, 2):
+                with self.subTest(fields=fields, attempts=attempts):
+                    await handle_cdr_group_notification(self.delivery, self.store, None, None, [{**base, **fields}] * attempts)
+                    for text in (self.delivery._notify_telegram.call_args.args[0], self.delivery._notify_email.call_args.args[1]):
+                        self.assertIn(f'От: {sender}\n', text)
+                        self.assertIn(f"Кому: `{fields['dst']}`\n", text)
 
     async def test_incoming_sms_uses_receiving_number_in_notification_and_storage(self):
         for port in (1, 2):
