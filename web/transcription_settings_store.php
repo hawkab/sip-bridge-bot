@@ -8,7 +8,7 @@ function read_transcription_settings(): array
         return ['backend' => 'gigaam', 'updated_at' => null];
     }
     $settings = json_decode((string) file_get_contents($path), true);
-    if (!is_array($settings) || !in_array($settings['backend'] ?? null, ['whisper', 'gigaam'], true)) {
+    if (!is_array($settings) || !in_array($settings['backend'] ?? null, ['whisper', 'gigaam', 'nemotron', 'tone'], true)) {
         throw new RuntimeException('Не удалось прочитать настройки распознавания.');
     }
     return ['backend' => $settings['backend'], 'updated_at' => $settings['updated_at'] ?? null];
@@ -16,8 +16,8 @@ function read_transcription_settings(): array
 
 function save_transcription_settings(string $backend): array
 {
-    if (!in_array($backend, ['whisper', 'gigaam'], true)) {
-        throw new InvalidArgumentException('Выберите faster-whisper или GigaAM.');
+    if (!in_array($backend, ['whisper', 'gigaam', 'nemotron', 'tone'], true)) {
+        throw new InvalidArgumentException('Выберите движок распознавания.');
     }
     ensure_storage_layout();
     $settings = ['backend' => $backend, 'updated_at' => date(DATE_ATOM)];

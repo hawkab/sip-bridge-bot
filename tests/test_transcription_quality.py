@@ -62,7 +62,7 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
                 {'start_hms':'00:00:02.000', 'text':'   '},
                 {'start_hms':'01:02:03.450', 'text':'Вторая реплика.'},
             ],speech_seconds=.5)
-            for backend, module in [('whisper', 'stereo'), ('gigaam', 'gigaam')]:
+            for backend, module in [('whisper', 'stereo'), ('gigaam', 'gigaam'), ('nemotron', 'gigaam'), ('tone', 'gigaam')]:
                 with self.subTest(backend=backend), patch.object(transcriber,'_get_model',return_value=object()), patch(f'integrations.transcription.{module}.transcribe_channel',return_value=result) as recognize:
                     response=await transcriber.transcribe_sample(path,backend)
                 self.assertEqual(response['text'],'[00:00:01.250] Первая реплика.\n[01:02:03.450] Вторая реплика.')

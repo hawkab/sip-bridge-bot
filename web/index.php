@@ -1716,8 +1716,10 @@ $appConfig = [
                 <select id="transcriptionBackend" class="form-select mb-3" ${s.loading || s.saving || !s.csrfToken ? 'disabled' : ''}>
                     <option value="gigaam" ${s.backend === 'gigaam' ? 'selected' : ''}>GigaAM</option>
                     <option value="whisper" ${s.backend === 'whisper' ? 'selected' : ''}>faster-whisper</option>
+                    <option value="tone" ${s.backend === 'tone' ? 'selected' : ''}>T-one</option>
+                    <option value="nemotron" ${s.backend === 'nemotron' ? 'selected' : ''}>NVIDIA Nemotron 3.5 ASR</option>
                 </select>
-                <p class="small text-secondary">GigaAM — рекомендуется для русской речи. faster-whisper — альтернативный движок распознавания.</p>
+                <p class="small text-secondary">Для новых записей. Выбранный движок можно проверить на своём аудио.</p>
                 ${s.loading ? '<p role="status">Загрузка настроек…</p>' : ''}
                 ${s.error ? `<div class="alert alert-danger" role="alert">${escapeHtml(s.error)}</div>` : ''}
                 ${s.message ? `<div class="alert alert-success" role="status">${escapeHtml(s.message)}</div>` : ''}

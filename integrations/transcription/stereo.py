@@ -41,14 +41,22 @@ class StereoCallTranscriber:
         self._backend = config.CALL_TRANSCRIBE_BACKEND
         self._channel_workers = getattr(config, 'CALL_TRANSCRIBE_CHANNEL_WORKERS', 1)
         self._gigaam_channel_workers = getattr(config, 'CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS', self._channel_workers)
-        if self._channel_workers not in (1, 2) or self._gigaam_channel_workers not in (1, 2):
+        self._tone_channel_workers = getattr(config, 'CALL_TRANSCRIBE_TONE_CHANNEL_WORKERS', self._gigaam_channel_workers)
+        if any(count not in (1, 2) for count in (self._channel_workers, self._gigaam_channel_workers, self._tone_channel_workers)):
             raise ValueError('Transcription channel worker counts must be 1 or 2')
         self._settings_client = None
         if getattr(config, 'CALL_TRANSCRIBE_SETTINGS_URL', ''):
             from integrations.transcription.settings import TranscriptionSettingsClient
             self._settings_client = TranscriptionSettingsClient(config, http_client)
 
+    def _release_model(self):
+        if self._backend == 'nemotron' and self._model is not None:
+            self._model.close()
+        self._model = None
+
     async def aclose(self):
+        async with self._transcribe_lock:
+            self._release_model()
         if self._settings_client is not None:
             await self._settings_client.aclose()
 
@@ -71,22 +79,27 @@ class StereoCallTranscriber:
                     if backend != self._backend:
                         logger.info('Switching transcription backend: %s -> %s', self._backend, backend)
                         # Only one model is kept in RAM; a running call always finishes first.
-                        self._model = None
+                        self._release_model()
                         self._backend = backend
-                return await asyncio.to_thread(self._transcribe_blocking, path)
+                task = asyncio.create_task(asyncio.to_thread(self._transcribe_blocking, path))
+                try:
+                    return await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    await task  # Native handles and the model lock must outlive inference.
+                    raise
             except Exception:
                 logger.exception('Failed to transcribe recording: %s', path)
                 return None
 
     async def transcribe_sample(self, path: Path, backend: str) -> dict[str, Any]:
-        if backend not in {'gigaam', 'whisper'}:
+        if backend not in {'gigaam', 'whisper', 'nemotron', 'tone'}:
             raise ValueError('Выберите движок распознавания.')
         async with self._transcribe_lock:
             # A test cannot switch the model underneath a running call, or alter
             # the saved engine preference. Keep only one model resident in RAM.
             previous = self._backend
             if backend != previous:
-                self._model = None
+                self._release_model()
                 self._backend = backend
             task = asyncio.create_task(asyncio.to_thread(self._transcribe_sample_blocking, path))
             try:
@@ -96,7 +109,7 @@ class StereoCallTranscriber:
                 raise
             finally:
                 if previous != backend:
-                    self._model = None
+                    self._release_model()
                     self._backend = previous
 
     def _transcribe_sample_blocking(self, path: Path) -> dict[str, Any]:
@@ -123,7 +136,7 @@ class StereoCallTranscriber:
                 split_gap_seconds=self.config.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS,
                 punctuation_gap_seconds=self.config.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS,
                 max_phrase_seconds=self.config.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS)
-            if self._backend == 'gigaam':
+            if self._backend in {'gigaam', 'nemotron', 'tone'}:
                 import numpy as np
                 from integrations.transcription import gigaam
                 result = gigaam.transcribe_channel(np.frombuffer(samples, dtype='<i2').astype(np.float32)/32768,
@@ -145,8 +158,8 @@ class StereoCallTranscriber:
             if wav.getnchannels() != 2:
                 raise ValueError('Call transcription requires a stereo PCM WAV recording')
         backend = self._backend
-        if backend == 'gigaam':
-            return self._transcribe_gigaam(wav_path)
+        if backend in {'gigaam', 'nemotron', 'tone'}:
+            return self._transcribe_vad_asr(wav_path)
         if backend != 'whisper':
             raise ValueError(f'Unsupported transcription backend: {backend}')
         ensure_ffmpeg()
@@ -193,7 +206,7 @@ class StereoCallTranscriber:
                 right=right_result,
             )
 
-    def _transcribe_gigaam(self, wav_path: Path) -> dict[str, Any]:
+    def _transcribe_vad_asr(self, wav_path: Path) -> dict[str, Any]:
         from integrations.transcription import gigaam
 
         audio_channels = gigaam.decode_stereo(wav_path)
@@ -212,17 +225,26 @@ class StereoCallTranscriber:
             [self.config.CALL_TRANSCRIBE_LEFT_LABEL, self.config.CALL_TRANSCRIBE_RIGHT_LABEL],
         ))
         payload = build_output_json(
-            input_wav=wav_path, model_name=gigaam.MODEL_NAME,
+            input_wav=wav_path, model_name={'gigaam': gigaam.MODEL_NAME, 'tone': 't-tech/t-one',
+                        'nemotron': 'nvidia/nemotron-3.5-asr-streaming-0.6b'}[self._backend],
             device='cpu', compute_type='int8', language='ru',
             vad_filter=True, vad_min_silence_ms=self.config.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS,
             merge_gap=self.config.CALL_TRANSCRIBE_MERGE_GAP,
             left=results[0], right=results[1],
         )
-        payload['backend'] = 'gigaam'
+        payload['backend'] = self._backend
+        if self._backend == 'nemotron':
+            payload['compute_type'] = 'q8_0'
+        elif self._backend == 'tone':
+            payload['compute_type'] = 'fp16-onnx-greedy'
         return payload
 
     def _run_channels(self, recognize, channels):
-        workers = self._gigaam_channel_workers if self._backend == 'gigaam' else self._channel_workers
+        workers = {'gigaam': self._gigaam_channel_workers, 'tone': self._tone_channel_workers}.get(
+            self._backend, self._channel_workers)
+        # The native Nemotron CPU runtime uses its own pool; keep channels serial.
+        if self._backend == 'nemotron':
+            workers = 1
         if workers == 1:
             return list(map(recognize, channels))
         # map preserves left/right ordering. The context also joins both workers
@@ -243,6 +265,18 @@ class StereoCallTranscriber:
                         self.config.CALL_TRANSCRIBE_GIGAAM_MODEL_PATH,
                         self.config.CALL_TRANSCRIBE_CPU_THREADS,
                     )
+                    return self._model
+                if self._backend == 'tone':
+                    from integrations.transcription import tone
+                    self._model = tone.load_model(
+                        getattr(self.config, 'CALL_TRANSCRIBE_TONE_MODEL_PATH', ''),
+                        self.config.CALL_TRANSCRIBE_CPU_THREADS)
+                    return self._model
+                if self._backend == 'nemotron':
+                    from integrations.transcription.nemotron import NemotronModel, DEFAULT_MODEL, DEFAULT_LIBRARY
+                    self._model = NemotronModel(
+                        getattr(self.config, 'CALL_TRANSCRIBE_NEMOTRON_MODEL_PATH', DEFAULT_MODEL),
+                        getattr(self.config, 'CALL_TRANSCRIBE_NEMOTRON_LIBRARY_PATH', DEFAULT_LIBRARY))
                     return self._model
                 logger.info(
                     'Loading Whisper model for call transcription: model=%s device=%s compute_type=%s',

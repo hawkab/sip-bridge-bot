@@ -33,6 +33,12 @@ try {
     $store = json_decode(file_get_contents($path),true); $store['jobs'][$id]['created_at']=time()-86401; file_put_contents($path,json_encode($store));
     asr_test_worker(['action'=>'claim']);
     invalid(fn()=>asr_test_get($id));
+    foreach (['b'=>'tone','c'=>'nemotron'] as $letter=>$backend) {
+        $new=asr_test_enqueue(['id'=>str_repeat($letter,32),'backend'=>$backend],$audio)['job'];
+        check($new['backend']===$backend,'New engine can be queued');
+        $claim=asr_test_worker(['action'=>'claim'])['job'];
+        asr_test_worker(['action'=>'complete','id'=>$claim['id'],'claim_token'=>$claim['claim_token'],'status'=>'completed','text'=>'Тест.']);
+    }
     for($i=0;$i<5;$i++) asr_test_enqueue(['id'=>str_repeat((string)$i,32),'backend'=>'whisper'],$audio);
     invalid(fn()=>asr_test_enqueue(['id'=>str_repeat('f',32),'backend'=>'whisper'],$audio));
     $store = json_decode(file_get_contents($path),true);

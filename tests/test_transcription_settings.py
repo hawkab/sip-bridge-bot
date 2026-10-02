@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
@@ -22,14 +22,14 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
         client = AsyncMock()
         request = httpx.Request('GET', settings.url)
         client.get.side_effect = [
-            httpx.Response(200, json={'ok': True, 'settings': {'backend': 'whisper'}}, request=request),
+            httpx.Response(200, json={'ok': True, 'settings': {'backend': 'tone'}}, request=request),
             httpx.Response(200, json={'ok': True, 'settings': {'backend': 'invalid'}}, request=request),
             httpx.ReadTimeout('timeout'),
             httpx.Response(302, headers={'Location': 'https://other.test/'}, request=request),
         ]
         with patch('integrations.http.create_http_client', return_value=client) as factory:
             for _ in range(4):
-                self.assertEqual(await settings.get_backend(), 'whisper')
+                self.assertEqual(await settings.get_backend(), 'tone')
             factory.assert_called_once_with()
         self.assertEqual(client.get.call_args.kwargs['timeout'], 3)
         self.assertFalse(client.get.call_args.kwargs['follow_redirects'])
@@ -47,17 +47,17 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
     async def test_queued_calls_switch_model_only_between_recordings(self):
         transcriber = StereoCallTranscriber(self.config())
         transcriber._model = object()
-        transcriber._settings_client.get_backend = AsyncMock(side_effect=['whisper', 'gigaam'])
+        transcriber._settings_client.get_backend = AsyncMock(side_effect=['nemotron', 'gigaam'])
         def recognize(path):
             self.assertIsNone(transcriber._model)
-            transcriber._model = object()
+            transcriber._model = Mock()
             return {'backend': transcriber._backend}
         with tempfile.TemporaryDirectory() as tmp:
             wav = Path(tmp) / 'call.wav'
             wav.touch()
             with patch.object(transcriber, '_transcribe_blocking', side_effect=recognize):
                 results = await asyncio.gather(transcriber.transcribe_recording(str(wav)), transcriber.transcribe_recording(str(wav)))
-        self.assertEqual(results, [{'backend': 'whisper'}, {'backend': 'gigaam'}])
+        self.assertEqual(results, [{'backend': 'nemotron'}, {'backend': 'gigaam'}])
 
 
 if __name__ == '__main__':

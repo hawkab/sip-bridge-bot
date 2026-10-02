@@ -141,8 +141,13 @@ class Config:
 
         self.CALL_TRANSCRIBE_ENABLED = os.environ.get("CALL_TRANSCRIBE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
         self.CALL_TRANSCRIBE_BACKEND = os.environ.get("CALL_TRANSCRIBE_BACKEND", "gigaam").strip().lower()
-        if self.CALL_TRANSCRIBE_BACKEND not in {"gigaam", "whisper"}:
-            raise ValueError("CALL_TRANSCRIBE_BACKEND must be gigaam or whisper")
+        if self.CALL_TRANSCRIBE_BACKEND not in {"gigaam", "whisper", "nemotron", "tone"}:
+            raise ValueError("CALL_TRANSCRIBE_BACKEND must be gigaam, whisper, nemotron or tone")
+        self.CALL_TRANSCRIBE_TONE_MODEL_PATH = os.environ.get("CALL_TRANSCRIBE_TONE_MODEL_PATH", "/opt/sms/var/models/tone").strip()
+        self.CALL_TRANSCRIBE_NEMOTRON_MODEL_PATH = os.environ.get(
+            "CALL_TRANSCRIBE_NEMOTRON_MODEL_PATH", "/opt/sms/var/models/nemotron/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf").strip()
+        self.CALL_TRANSCRIBE_NEMOTRON_LIBRARY_PATH = os.environ.get(
+            "CALL_TRANSCRIBE_NEMOTRON_LIBRARY_PATH", "/opt/sms/var/models/nemotron/runtime/lib/libnemo_speech_asr_c.so.1").strip()
         self.CALL_TRANSCRIBE_GIGAAM_MODEL_PATH = os.environ.get("CALL_TRANSCRIBE_GIGAAM_MODEL_PATH", "").strip()
         self.CALL_TRANSCRIBE_SETTINGS_URL = os.environ.get(
             "CALL_TRANSCRIBE_SETTINGS_URL",
@@ -153,8 +158,11 @@ class Config:
         self.CALL_TRANSCRIBE_CHANNEL_WORKERS = int(os.environ.get("CALL_TRANSCRIBE_CHANNEL_WORKERS", "1"))
         self.CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS = int(os.environ.get(
             "CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS", str(self.CALL_TRANSCRIBE_CHANNEL_WORKERS)))
+        self.CALL_TRANSCRIBE_TONE_CHANNEL_WORKERS = int(os.environ.get(
+            "CALL_TRANSCRIBE_TONE_CHANNEL_WORKERS", str(self.CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS)))
         if any(value not in (1, 2) for value in (
-            self.CALL_TRANSCRIBE_CHANNEL_WORKERS, self.CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS)):
+            self.CALL_TRANSCRIBE_CHANNEL_WORKERS, self.CALL_TRANSCRIBE_GIGAAM_CHANNEL_WORKERS,
+            self.CALL_TRANSCRIBE_TONE_CHANNEL_WORKERS)):
             raise ValueError("Transcription channel worker counts must be 1 or 2")
         if self.CALL_TRANSCRIBE_CPU_THREADS < 1:
             raise ValueError("CALL_TRANSCRIBE_CPU_THREADS must be positive")

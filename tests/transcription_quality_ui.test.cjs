@@ -70,3 +70,18 @@ test('silence is distinct from speech that could not be decoded',async()=>{
   app.file();await app.click('transcribe');assert.match(app.element('resultText').textContent,detected?/текст не распознан/:/Речь не обнаружена/);assert.equal(app.element('copy').disabled,true);
  }
 });
+
+
+test('Nemotron results display the selected provider and timestamped lines', async()=>{
+ const app=setup({saved:'a'.repeat(32),fetcher:async()=>({ok:true,json:async()=>({ok:true,job:{status:'completed',text:'[00:00:01.000] Проверка.',backend:'nemotron',duration:2,elapsed:1}})})});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.match(app.element('resultMeta').textContent,/NVIDIA Nemotron 3.5 ASR/);
+ assert.equal(app.element('resultText').textContent,'[00:00:01.000] Проверка.');
+});
+
+
+test('T-one results display the selected provider', async()=>{
+ const app=setup({saved:'b'.repeat(32),fetcher:async()=>({ok:true,json:async()=>({ok:true,job:{status:'completed',text:'[00:00:01.000] проверка',backend:'tone',duration:2,elapsed:1}})})});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.match(app.element('resultMeta').textContent,/T-one/);
+});

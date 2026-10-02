@@ -15,7 +15,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument('input_wav', help='Path to input stereo WAV file.')
     parser.add_argument('-o', '--output', default=None, help='Optional output JSON file. If omitted, JSON is printed to stdout.')
-    parser.add_argument('--backend', choices=['gigaam', 'whisper'], default='gigaam', help='ASR backend. Default: gigaam')
+    parser.add_argument('--backend', choices=['gigaam', 'whisper', 'nemotron', 'tone'], default='gigaam', help='ASR backend. Default: gigaam')
+    from integrations.transcription.nemotron import DEFAULT_MODEL, DEFAULT_LIBRARY
+    parser.add_argument('--nemotron-model-path', default=DEFAULT_MODEL)
+    parser.add_argument('--nemotron-library-path', default=DEFAULT_LIBRARY)
+    parser.add_argument('--tone-model-path', default='')
     parser.add_argument('--gigaam-model-path', default='', help='Optional local GigaAM ONNX model directory')
     parser.add_argument('--cpu-threads', type=int, default=2, help='CPU inference threads per worker. Default: 2')
     parser.add_argument('--channel-workers', type=int, choices=[1, 2], default=1, help='Concurrent channel workers. Default: 1')
@@ -42,6 +46,9 @@ def build_cli_config(args: argparse.Namespace) -> SimpleNamespace:
     return SimpleNamespace(
         CALL_TRANSCRIBE_ENABLED=True,
         CALL_TRANSCRIBE_BACKEND=args.backend,
+        CALL_TRANSCRIBE_TONE_MODEL_PATH=args.tone_model_path,
+        CALL_TRANSCRIBE_NEMOTRON_MODEL_PATH=args.nemotron_model_path,
+        CALL_TRANSCRIBE_NEMOTRON_LIBRARY_PATH=args.nemotron_library_path,
         CALL_TRANSCRIBE_GIGAAM_MODEL_PATH=args.gigaam_model_path,
         CALL_TRANSCRIBE_CPU_THREADS=args.cpu_threads,
         CALL_TRANSCRIBE_CHANNEL_WORKERS=args.channel_workers,

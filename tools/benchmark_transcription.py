@@ -22,10 +22,14 @@ from integrations.transcription.stereo import StereoCallTranscriber
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('recordings', type=Path, help='Directory of stereo WAV files')
-    parser.add_argument('--backend', choices=['gigaam', 'whisper'], default='gigaam')
+    parser.add_argument('--backend', choices=['gigaam', 'whisper', 'nemotron', 'tone'], default='gigaam')
     parser.add_argument('--channel-workers', choices=[1, 2], type=int, default=1)
     parser.add_argument('--cpu-threads', type=int, default=2)
     parser.add_argument('--repeats', type=int, default=3)
+    from integrations.transcription.nemotron import DEFAULT_MODEL, DEFAULT_LIBRARY
+    parser.add_argument('--nemotron-model-path', default=DEFAULT_MODEL)
+    parser.add_argument('--nemotron-library-path', default=DEFAULT_LIBRARY)
+    parser.add_argument('--tone-model-path', default='')
     parser.add_argument('--gigaam-model-path', default='')
     parser.add_argument('--model', default='small', help='Whisper model or local path')
     args = parser.parse_args()
@@ -37,6 +41,9 @@ def main():
     cfg = SimpleNamespace(
         CALL_TRANSCRIBE_BACKEND=args.backend, CALL_TRANSCRIBE_CHANNEL_WORKERS=args.channel_workers,
         CALL_TRANSCRIBE_CPU_THREADS=args.cpu_threads, CALL_TRANSCRIBE_ENABLED=True,
+        CALL_TRANSCRIBE_TONE_MODEL_PATH=args.tone_model_path,
+        CALL_TRANSCRIBE_NEMOTRON_MODEL_PATH=args.nemotron_model_path,
+        CALL_TRANSCRIBE_NEMOTRON_LIBRARY_PATH=args.nemotron_library_path,
         CALL_TRANSCRIBE_GIGAAM_MODEL_PATH=args.gigaam_model_path, CALL_TRANSCRIBE_MODEL=args.model,
         CALL_TRANSCRIBE_DEVICE='cpu', CALL_TRANSCRIBE_COMPUTE_TYPE='int8', CALL_TRANSCRIBE_BEAM_SIZE=5,
         CALL_TRANSCRIBE_VAD_FILTER=True, CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS=500,
@@ -56,7 +63,8 @@ def main():
             elapsed, cpu = time.perf_counter() - start, time.process_time() - cpu_start
             encoded = json.dumps(result['conversation'], ensure_ascii=False, sort_keys=True).encode()
             print(json.dumps(dict(
-                backend=args.backend, workers=args.channel_workers, threads=args.cpu_threads,
+                backend=args.backend, workers=1 if args.backend == 'nemotron' else args.channel_workers,
+                threads=None if args.backend == 'nemotron' else args.cpu_threads,
                 trial=trial, case=path.name, seconds=elapsed, cpu_seconds=cpu,
                 load_seconds=load_seconds, peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                 result_sha256=hashlib.sha256(encoded).hexdigest(),
