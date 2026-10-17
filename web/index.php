@@ -1715,6 +1715,7 @@ $appConfig = [
                 <label class="form-label fw-semibold" for="transcriptionBackend">Движок распознавания</label>
                 <select id="transcriptionBackend" class="form-select mb-3" ${s.loading || s.saving || !s.csrfToken ? 'disabled' : ''}>
                     <option value="gigaam" ${s.backend === 'gigaam' ? 'selected' : ''}>GigaAM</option>
+                    <option value="gigaam_parakeet" ${s.backend === 'gigaam_parakeet' ? 'selected' : ''}>GigaAM + Parakeet</option>
                     <option value="whisper" ${s.backend === 'whisper' ? 'selected' : ''}>faster-whisper</option>
                     <option value="tone" ${s.backend === 'tone' ? 'selected' : ''}>T-one</option>
                     <option value="nemotron" ${s.backend === 'nemotron' ? 'selected' : ''}>NVIDIA Nemotron 3.5 ASR</option>

@@ -23,7 +23,7 @@ if ($action !== '') {
 }
 if (!is_user_authenticated()) { header('Location: ' . get_app_url(true)); exit; }
 $backend = $_GET['backend'] ?? read_transcription_settings()['backend'];
-if (!in_array($backend, ['gigaam','whisper','nemotron','tone'], true)) $backend = 'gigaam';
+if (!in_array($backend, ['gigaam','gigaam_parakeet','whisper','nemotron','tone'], true)) $backend = 'gigaam';
 function asr_ini_bytes(string $value): int {
     $value = trim($value); $number = (float) $value;
     return (int) ($number * (1024 ** (['k'=>1,'m'=>2,'g'=>3][strtolower(substr($value, -1))] ?? 0)));
@@ -47,7 +47,7 @@ session_write_close();
     <h1>Проверка транскрибации</h1>
     <section class="panel">
         <label for="engine">Движок</label>
-        <select id="engine"><option value="gigaam">GigaAM</option><option value="whisper">faster-whisper</option><option value="nemotron">NVIDIA Nemotron 3.5 ASR</option><option value="tone">T-one</option></select>
+        <select id="engine"><option value="gigaam">GigaAM</option><option value="gigaam_parakeet">GigaAM + Parakeet</option><option value="whisper">faster-whisper</option><option value="nemotron">NVIDIA Nemotron 3.5 ASR</option><option value="tone">T-one</option></select>
         <div class="record-row"><button id="record" type="button">● Записать голос</button><span id="timer" role="status" aria-live="off"></span></div>
         <div id="dropzone" class="dropzone">
             <span class="drop-hint">Перетащите аудио сюда</span>

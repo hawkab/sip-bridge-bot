@@ -15,10 +15,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument('input_wav', help='Path to input stereo WAV file.')
     parser.add_argument('-o', '--output', default=None, help='Optional output JSON file. If omitted, JSON is printed to stdout.')
-    parser.add_argument('--backend', choices=['gigaam', 'whisper', 'nemotron', 'tone'], default='gigaam', help='ASR backend. Default: gigaam')
+    parser.add_argument('--backend', choices=['gigaam', 'gigaam_parakeet', 'whisper', 'nemotron', 'tone'], default='gigaam', help='ASR backend. Default: gigaam')
     from integrations.transcription.nemotron import DEFAULT_MODEL, DEFAULT_LIBRARY
     parser.add_argument('--nemotron-model-path', default=DEFAULT_MODEL)
     parser.add_argument('--nemotron-library-path', default=DEFAULT_LIBRARY)
+    from integrations.transcription.parakeet import DEFAULT_MODEL as PARAKEET_MODEL, DEFAULT_LIBRARY as PARAKEET_LIBRARY
+    parser.add_argument('--parakeet-model-path', default=PARAKEET_MODEL)
+    parser.add_argument('--parakeet-library-path', default=PARAKEET_LIBRARY)
+    parser.add_argument('--parakeet-threads', type=int, default=4)
     parser.add_argument('--tone-model-path', default='')
     parser.add_argument('--gigaam-model-path', default='', help='Optional local GigaAM ONNX model directory')
     parser.add_argument('--cpu-threads', type=int, default=2, help='CPU inference threads per worker. Default: 2')
@@ -37,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--vad-min-silence-ms', type=int, default=500, help='Minimum silence duration for VAD. Default: 500')
     parser.add_argument('--indent', type=int, default=2, help='JSON indentation. Default: 2')
     args = parser.parse_args()
-    if args.cpu_threads < 1:
+    if args.parakeet_threads < 1 or args.cpu_threads < 1:
         parser.error('--cpu-threads must be positive')
     return args
 
@@ -46,6 +50,9 @@ def build_cli_config(args: argparse.Namespace) -> SimpleNamespace:
     return SimpleNamespace(
         CALL_TRANSCRIBE_ENABLED=True,
         CALL_TRANSCRIBE_BACKEND=args.backend,
+        CALL_TRANSCRIBE_PARAKEET_MODEL_PATH=args.parakeet_model_path,
+        CALL_TRANSCRIBE_PARAKEET_LIBRARY_PATH=args.parakeet_library_path,
+        CALL_TRANSCRIBE_PARAKEET_THREADS=args.parakeet_threads,
         CALL_TRANSCRIBE_TONE_MODEL_PATH=args.tone_model_path,
         CALL_TRANSCRIBE_NEMOTRON_MODEL_PATH=args.nemotron_model_path,
         CALL_TRANSCRIBE_NEMOTRON_LIBRARY_PATH=args.nemotron_library_path,

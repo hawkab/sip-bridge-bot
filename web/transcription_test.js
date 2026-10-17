@@ -89,7 +89,7 @@
         busy = false; status(''); controls();
         if (job.status === 'failed') { message('error', job.message || 'Не удалось распознать запись.'); jobId = ''; try { sessionStorage.removeItem(storageKey); } catch (_) {} return true; }
         resultText = job.text || ''; el('resultText').textContent = resultText || (job.speech_detected ? 'Речь обнаружена, но текст не распознан.' : 'Речь не обнаружена.');
-        el('resultMeta').textContent = `${({gigaam: 'GigaAM', whisper: 'faster-whisper', nemotron: 'NVIDIA Nemotron 3.5 ASR', tone: 'T-one'}[job.backend] || job.backend)} · Аудио ${job.duration ?? 0} с · Обработка ${job.elapsed ?? 0} с`;
+        el('resultMeta').textContent = `${({gigaam: 'GigaAM', gigaam_parakeet: 'GigaAM + Parakeet', whisper: 'faster-whisper', nemotron: 'NVIDIA Nemotron 3.5 ASR', tone: 'T-one'}[job.backend] || job.backend)} · Аудио ${job.duration ?? 0} с · Обработка ${job.elapsed ?? 0} с`;
         el('copy').disabled = !resultText; el('result').hidden = false; jobId = ''; return true;
     }
     async function poll() {

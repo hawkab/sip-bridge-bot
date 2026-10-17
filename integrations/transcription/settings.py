@@ -29,7 +29,7 @@ class TranscriptionSettingsClient(HostingHttpClient):
                 raise ValueError('Unsuccessful settings response')
             settings = data.get('settings')
             backend = settings.get('backend') if isinstance(settings, dict) else None
-            if backend not in {'whisper', 'gigaam', 'nemotron', 'tone'}:
+            if backend not in {'whisper', 'gigaam', 'gigaam_parakeet', 'nemotron', 'tone'}:
                 raise ValueError('Unsupported transcription backend in settings')
             self.backend = backend
         except (httpx.HTTPError, ValueError, TypeError):

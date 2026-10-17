@@ -51,7 +51,7 @@ function asr_test_enqueue(array $data, string $audio): array
 {
     $backend = $data['backend'] ?? '';
     $id = $data['id'] ?? '';
-    if (!is_string($id) || !preg_match('/^[a-f0-9]{32}$/D', $id) || !in_array($backend, ['gigaam','whisper','nemotron','tone'], true)) throw new InvalidArgumentException('Выберите движок распознавания.');
+    if (!is_string($id) || !preg_match('/^[a-f0-9]{32}$/D', $id) || !in_array($backend, ['gigaam','gigaam_parakeet','whisper','nemotron','tone'], true)) throw new InvalidArgumentException('Выберите движок распознавания.');
     if (strlen($audio) < 32 || strlen($audio) > ASR_TEST_MAX_BYTES) throw new InvalidArgumentException('Загрузите аудиофайл до 20 МБ.');
     return asr_test_transaction(static function(array &$store, string $dir) use ($id, $backend, $audio): array {
         $hash = hash('sha256', $audio);

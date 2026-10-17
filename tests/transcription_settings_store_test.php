@@ -4,7 +4,7 @@ define('DATA_STORAGE_DIR',sys_get_temp_dir().'/asr-settings-'.bin2hex(random_byt
 function ensure_storage_layout(): void { if (!is_dir(DATA_STORAGE_DIR)) mkdir(DATA_STORAGE_DIR,0700); }
 require __DIR__.'/../web/transcription_settings_store.php';
 try {
-    foreach (['tone','nemotron','whisper','gigaam'] as $backend) {
+    foreach (['gigaam_parakeet','tone','nemotron','whisper','gigaam'] as $backend) {
         save_transcription_settings($backend);
         if (read_transcription_settings()['backend']!==$backend) throw new RuntimeException('Selection not persisted');
     }

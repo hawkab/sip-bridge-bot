@@ -2,7 +2,9 @@
 
 Run each workers/threads combination in a fresh process so peak RSS is comparable.
 JSONL contains result hashes, not recognized text. Compare hashes only within the
-same engine/model. Input filenames may still contain personal information.
+same engine/model. CPU includes child processes; peak_rss_kib is the parent
+process high-water mark, peak_child_rss_kib is the largest child (not their sum
+or simultaneous peak). Input filenames may still contain personal information.
 """
 from __future__ import annotations
 
@@ -19,21 +21,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from integrations.transcription.stereo import StereoCallTranscriber
 
 
+def cpu_seconds():
+    children = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return time.process_time() + children.ru_utime + children.ru_stime
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('recordings', type=Path, help='Directory of stereo WAV files')
-    parser.add_argument('--backend', choices=['gigaam', 'whisper', 'nemotron', 'tone'], default='gigaam')
+    parser.add_argument('--backend', choices=['gigaam', 'gigaam_parakeet', 'whisper', 'nemotron', 'tone'], default='gigaam')
     parser.add_argument('--channel-workers', choices=[1, 2], type=int, default=1)
     parser.add_argument('--cpu-threads', type=int, default=2)
     parser.add_argument('--repeats', type=int, default=3)
     from integrations.transcription.nemotron import DEFAULT_MODEL, DEFAULT_LIBRARY
     parser.add_argument('--nemotron-model-path', default=DEFAULT_MODEL)
     parser.add_argument('--nemotron-library-path', default=DEFAULT_LIBRARY)
+    from integrations.transcription.parakeet import DEFAULT_MODEL as PARAKEET_MODEL, DEFAULT_LIBRARY as PARAKEET_LIBRARY
+    parser.add_argument('--parakeet-model-path', default=PARAKEET_MODEL)
+    parser.add_argument('--parakeet-library-path', default=PARAKEET_LIBRARY)
+    parser.add_argument('--parakeet-threads', type=int, default=4)
     parser.add_argument('--tone-model-path', default='')
     parser.add_argument('--gigaam-model-path', default='')
     parser.add_argument('--model', default='small', help='Whisper model or local path')
     args = parser.parse_args()
-    if args.cpu_threads < 1 or args.repeats < 1:
+    if args.parakeet_threads < 1 or args.cpu_threads < 1 or args.repeats < 1:
         parser.error('cpu-threads and repeats must be positive')
     paths = sorted(args.recordings.glob('*.wav'))
     if not paths:
@@ -41,6 +52,9 @@ def main():
     cfg = SimpleNamespace(
         CALL_TRANSCRIBE_BACKEND=args.backend, CALL_TRANSCRIBE_CHANNEL_WORKERS=args.channel_workers,
         CALL_TRANSCRIBE_CPU_THREADS=args.cpu_threads, CALL_TRANSCRIBE_ENABLED=True,
+        CALL_TRANSCRIBE_PARAKEET_MODEL_PATH=args.parakeet_model_path,
+        CALL_TRANSCRIBE_PARAKEET_LIBRARY_PATH=args.parakeet_library_path,
+        CALL_TRANSCRIBE_PARAKEET_THREADS=args.parakeet_threads,
         CALL_TRANSCRIBE_TONE_MODEL_PATH=args.tone_model_path,
         CALL_TRANSCRIBE_NEMOTRON_MODEL_PATH=args.nemotron_model_path,
         CALL_TRANSCRIBE_NEMOTRON_LIBRARY_PATH=args.nemotron_library_path,
@@ -58,15 +72,17 @@ def main():
     transcriber._transcribe_blocking(paths[0])  # Untimed warmup, including VAD.
     for trial in range(args.repeats):
         for path in paths:
-            start, cpu_start = time.perf_counter(), time.process_time()
+            start, cpu_start = time.perf_counter(), cpu_seconds()
             result = transcriber._transcribe_blocking(path)
-            elapsed, cpu = time.perf_counter() - start, time.process_time() - cpu_start
+            elapsed, cpu = time.perf_counter() - start, cpu_seconds() - cpu_start
             encoded = json.dumps(result['conversation'], ensure_ascii=False, sort_keys=True).encode()
             print(json.dumps(dict(
                 backend=args.backend, workers=1 if args.backend == 'nemotron' else args.channel_workers,
                 threads=None if args.backend == 'nemotron' else args.cpu_threads,
                 trial=trial, case=path.name, seconds=elapsed, cpu_seconds=cpu,
-                load_seconds=load_seconds, peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                load_seconds=load_seconds,
+                peak_child_rss_kib=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
+                peak_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                 result_sha256=hashlib.sha256(encoded).hexdigest(),
             )), flush=True)
 

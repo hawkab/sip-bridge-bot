@@ -22,14 +22,14 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
         client = AsyncMock()
         request = httpx.Request('GET', settings.url)
         client.get.side_effect = [
-            httpx.Response(200, json={'ok': True, 'settings': {'backend': 'tone'}}, request=request),
+            httpx.Response(200, json={'ok': True, 'settings': {'backend': 'gigaam_parakeet'}}, request=request),
             httpx.Response(200, json={'ok': True, 'settings': {'backend': 'invalid'}}, request=request),
             httpx.ReadTimeout('timeout'),
             httpx.Response(302, headers={'Location': 'https://other.test/'}, request=request),
         ]
         with patch('integrations.http.create_http_client', return_value=client) as factory:
             for _ in range(4):
-                self.assertEqual(await settings.get_backend(), 'tone')
+                self.assertEqual(await settings.get_backend(), 'gigaam_parakeet')
             factory.assert_called_once_with()
         self.assertEqual(client.get.call_args.kwargs['timeout'], 3)
         self.assertFalse(client.get.call_args.kwargs['follow_redirects'])

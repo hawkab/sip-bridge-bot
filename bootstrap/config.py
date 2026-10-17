@@ -140,9 +140,16 @@ class Config:
 
 
         self.CALL_TRANSCRIBE_ENABLED = os.environ.get("CALL_TRANSCRIBE_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+        self.CALL_TRANSCRIBE_PARAKEET_MODEL_PATH = os.environ.get(
+            "CALL_TRANSCRIBE_PARAKEET_MODEL_PATH", "/opt/sms/var/models/parakeet/parakeet-tdt-0.6b-v3-Q8_0.gguf").strip()
+        self.CALL_TRANSCRIBE_PARAKEET_LIBRARY_PATH = os.environ.get(
+            "CALL_TRANSCRIBE_PARAKEET_LIBRARY_PATH", "/opt/sms/var/models/parakeet/runtime/libtranscribe.so").strip()
+        self.CALL_TRANSCRIBE_PARAKEET_THREADS = int(os.environ.get("CALL_TRANSCRIBE_PARAKEET_THREADS", "4"))
+        if self.CALL_TRANSCRIBE_PARAKEET_THREADS < 1:
+            raise ValueError("CALL_TRANSCRIBE_PARAKEET_THREADS must be positive")
         self.CALL_TRANSCRIBE_BACKEND = os.environ.get("CALL_TRANSCRIBE_BACKEND", "gigaam").strip().lower()
-        if self.CALL_TRANSCRIBE_BACKEND not in {"gigaam", "whisper", "nemotron", "tone"}:
-            raise ValueError("CALL_TRANSCRIBE_BACKEND must be gigaam, whisper, nemotron or tone")
+        if self.CALL_TRANSCRIBE_BACKEND not in {"gigaam", "gigaam_parakeet", "whisper", "nemotron", "tone"}:
+            raise ValueError("CALL_TRANSCRIBE_BACKEND must be gigaam, gigaam_parakeet, whisper, nemotron or tone")
         self.CALL_TRANSCRIBE_TONE_MODEL_PATH = os.environ.get("CALL_TRANSCRIBE_TONE_MODEL_PATH", "/opt/sms/var/models/tone").strip()
         self.CALL_TRANSCRIBE_NEMOTRON_MODEL_PATH = os.environ.get(
             "CALL_TRANSCRIBE_NEMOTRON_MODEL_PATH", "/opt/sms/var/models/nemotron/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf").strip()

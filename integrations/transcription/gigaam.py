@@ -73,6 +73,7 @@ def transcribe_channel(
     audio: np.ndarray, get_model: Callable[[], Any], *, speaker: str,
     channel_name: str, vad_min_silence_ms: int, split_gap_seconds: float,
     punctuation_gap_seconds: float, max_phrase_seconds: float,
+    capture: list | None = None,
 ) -> ChannelResult:
     rows = []
     intervals = []
@@ -86,6 +87,15 @@ def transcribe_channel(
         for interval in intervals:
             start, end = interval['start'], interval['end']
             result = get_model().recognize(audio[start:end], sample_rate=SAMPLE_RATE)
+            if capture is not None:
+                try:
+                    tokens = list(getattr(result, 'tokens', None) or [])
+                    logprobs = [float(p) for p in (getattr(result, 'logprobs', None) or [])]
+                except (TypeError, ValueError, OverflowError):
+                    # Optional confidence must never discard an otherwise valid transcript.
+                    tokens, logprobs = [], []
+                capture.append(dict(channel=channel_name, start=int(start), end=int(end),
+                    text=result.text, tokens=tokens, logprobs=logprobs))
             rows.extend(split_segment_into_phrases(
                 seg=aligned_segment(result, start / SAMPLE_RATE, end / SAMPLE_RATE),
                 speaker=speaker, channel_name=channel_name,

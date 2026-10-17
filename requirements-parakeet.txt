@@ -1,0 +1,2 @@
+# Optional binding for GigaAM + selective Parakeet. Install with --no-deps.
+transcribe_cpp==0.2.3 --hash=sha256:be4ec773c3e48993301f5b4256781ee5ef96ff075e904fc495c0effd096f1a03

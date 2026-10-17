@@ -1,6 +1,6 @@
 # SipBridgeBot
 
-Распознавание звонков: [GigaAM / faster-whisper, настройка и установка](docs/transcription.md). Выбор движка в веб-интерфейсе: [обновление хостинга](web/README.md).
+Распознавание звонков: [GigaAM / выборочный Parakeet / faster-whisper, настройка и установка](docs/transcription.md). Выбор движка в веб-интерфейсе: [обновление хостинга](web/README.md).
 
 Производительность: [пул HTTP-соединений, опрос очередей и память Python](docs/python-performance.md).
 

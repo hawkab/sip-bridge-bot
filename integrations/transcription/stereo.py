@@ -78,7 +78,7 @@ class StereoCallTranscriber:
                     backend = await self._settings_client.get_backend()
                     if backend != self._backend:
                         logger.info('Switching transcription backend: %s -> %s', self._backend, backend)
-                        # Only one model is kept in RAM; a running call always finishes first.
+                        # Release the base model only after the running call finishes.
                         self._release_model()
                         self._backend = backend
                 task = asyncio.create_task(asyncio.to_thread(self._transcribe_blocking, path))
@@ -92,11 +92,11 @@ class StereoCallTranscriber:
                 return None
 
     async def transcribe_sample(self, path: Path, backend: str) -> dict[str, Any]:
-        if backend not in {'gigaam', 'whisper', 'nemotron', 'tone'}:
+        if backend not in {'gigaam', 'gigaam_parakeet', 'whisper', 'nemotron', 'tone'}:
             raise ValueError('Выберите движок распознавания.')
         async with self._transcribe_lock:
             # A test cannot switch the model underneath a running call, or alter
-            # the saved engine preference. Keep only one model resident in RAM.
+            # the saved engine preference. Only the base model stays resident.
             previous = self._backend
             if backend != previous:
                 self._release_model()
@@ -136,11 +136,17 @@ class StereoCallTranscriber:
                 split_gap_seconds=self.config.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS,
                 punctuation_gap_seconds=self.config.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS,
                 max_phrase_seconds=self.config.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS)
-            if self._backend in {'gigaam', 'nemotron', 'tone'}:
+            if self._backend in {'gigaam', 'gigaam_parakeet', 'nemotron', 'tone'}:
                 import numpy as np
                 from integrations.transcription import gigaam
-                result = gigaam.transcribe_channel(np.frombuffer(samples, dtype='<i2').astype(np.float32)/32768,
-                    self._get_model, **options)
+                audio = np.frombuffer(samples, dtype='<i2').astype(np.float32)/32768
+                capture = [] if self._backend == 'gigaam_parakeet' else None
+                result = gigaam.transcribe_channel(audio, self._get_model, **options,
+                    **({'capture': capture} if capture is not None else {}))
+                if capture is not None:
+                    from integrations.transcription.parakeet import correct_selected
+                    corrected = correct_selected({'conversation': result.segments}, capture, {'mono': audio}, self.config)
+                    result.segments = corrected['conversation']
             else:
                 result = transcribe_channel(self._get_model(), wav, language='ru',
                     beam_size=self.config.CALL_TRANSCRIBE_BEAM_SIZE,
@@ -158,7 +164,7 @@ class StereoCallTranscriber:
             if wav.getnchannels() != 2:
                 raise ValueError('Call transcription requires a stereo PCM WAV recording')
         backend = self._backend
-        if backend in {'gigaam', 'nemotron', 'tone'}:
+        if backend in {'gigaam', 'gigaam_parakeet', 'nemotron', 'tone'}:
             return self._transcribe_vad_asr(wav_path)
         if backend != 'whisper':
             raise ValueError(f'Unsupported transcription backend: {backend}')
@@ -210,6 +216,7 @@ class StereoCallTranscriber:
         from integrations.transcription import gigaam
 
         audio_channels = gigaam.decode_stereo(wav_path)
+        capture = [] if self._backend == 'gigaam_parakeet' else None
 
         def recognize_channel(item):
             audio, name, label = item
@@ -219,19 +226,23 @@ class StereoCallTranscriber:
                 split_gap_seconds=self.config.CALL_TRANSCRIBE_SPLIT_GAP_SECONDS,
                 punctuation_gap_seconds=self.config.CALL_TRANSCRIBE_PUNCTUATION_GAP_SECONDS,
                 max_phrase_seconds=self.config.CALL_TRANSCRIBE_MAX_PHRASE_SECONDS,
+                **({'capture': capture} if capture is not None else {}),
             )
         results = self._run_channels(recognize_channel, zip(
             audio_channels, ['left', 'right'],
             [self.config.CALL_TRANSCRIBE_LEFT_LABEL, self.config.CALL_TRANSCRIBE_RIGHT_LABEL],
         ))
         payload = build_output_json(
-            input_wav=wav_path, model_name={'gigaam': gigaam.MODEL_NAME, 'tone': 't-tech/t-one',
+            input_wav=wav_path, model_name={'gigaam': gigaam.MODEL_NAME, 'gigaam_parakeet': gigaam.MODEL_NAME, 'tone': 't-tech/t-one',
                         'nemotron': 'nvidia/nemotron-3.5-asr-streaming-0.6b'}[self._backend],
             device='cpu', compute_type='int8', language='ru',
             vad_filter=True, vad_min_silence_ms=self.config.CALL_TRANSCRIBE_VAD_MIN_SILENCE_MS,
             merge_gap=self.config.CALL_TRANSCRIBE_MERGE_GAP,
             left=results[0], right=results[1],
         )
+        if capture is not None:
+            from integrations.transcription.parakeet import correct_selected
+            payload = correct_selected(payload, capture, dict(zip(['left', 'right'], audio_channels)), self.config)
         payload['backend'] = self._backend
         if self._backend == 'nemotron':
             payload['compute_type'] = 'q8_0'
@@ -240,7 +251,7 @@ class StereoCallTranscriber:
         return payload
 
     def _run_channels(self, recognize, channels):
-        workers = {'gigaam': self._gigaam_channel_workers, 'tone': self._tone_channel_workers}.get(
+        workers = {'gigaam': self._gigaam_channel_workers, 'gigaam_parakeet': self._gigaam_channel_workers, 'tone': self._tone_channel_workers}.get(
             self._backend, self._channel_workers)
         # The native Nemotron CPU runtime uses its own pool; keep channels serial.
         if self._backend == 'nemotron':
@@ -257,7 +268,7 @@ class StereoCallTranscriber:
             return self._model
         with self._model_lock:
             if self._model is None:
-                if self._backend == 'gigaam':
+                if self._backend in {'gigaam', 'gigaam_parakeet'}:
                     from integrations.transcription import gigaam
 
                     logger.info('Loading GigaAM v3 e2e RNN-T int8 for call transcription')
